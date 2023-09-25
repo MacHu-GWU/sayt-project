@@ -56,7 +56,6 @@ Features:
 
 1. Support id search, ngram search, full text search, fuzzy search, range search.
 2. Query results are automatically cached, and will expire based on your configuration.
-3.
 
 
 .. _install:
