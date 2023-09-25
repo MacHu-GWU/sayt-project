@@ -27,6 +27,7 @@ id 则是 isbn.
 import typing as T
 import shutil
 import os
+import hashlib
 import dataclasses
 from collections import OrderedDict
 
@@ -301,19 +302,25 @@ class DataSet:
     # --------------------------------------------------------------------------
     __2_INDEX = None
 
+    @property
+    def normalized_index_name(self) -> str:
+        m = hashlib.md5()
+        m.update(self.index_name.encode("utf-8"))
+        return m.hexdigest()
+
     def _get_index(self) -> FileIndex:
         """
         Get the whoosh index object. If the index does not exist, create one.
         if the index exists, open it.
         """
-        if exists_in(str(self.dir_index), indexname=self.index_name):
-            idx = open_dir(str(self.dir_index), indexname=self.index_name)
+        if exists_in(str(self.dir_index), indexname=self.normalized_index_name):
+            idx = open_dir(str(self.dir_index), indexname=self.normalized_index_name)
         else:
             self.dir_index.mkdir(parents=True, exist_ok=True)
             idx = create_in(
                 dirname=str(self.dir_index),
                 schema=self.schema,
-                indexname=self.index_name,
+                indexname=self.normalized_index_name,
             )
         return idx
 
@@ -321,11 +328,11 @@ class DataSet:
         """
         Remove the whoosh index for this dataset.
         """
-        if exists_in(str(self.dir_index), indexname=self.index_name):
+        if exists_in(str(self.dir_index), indexname=self.normalized_index_name):
             idx = create_in(
                 dirname=str(self.dir_index),
                 schema=self.schema,
-                indexname=self.index_name,
+                indexname=self.normalized_index_name,
             )
             idx.close()
 
@@ -392,6 +399,9 @@ class DataSet:
         self.cache.clear()
 
     def _parse_query(self, query_str: str) -> whoosh.query.Query:
+        """
+        Use multi field parser to convert query string into a whoosh query object.
+        """
         parser = whoosh.qparser.MultifieldParser(
             self._searchable_fields,
             schema=self.schema,
@@ -415,6 +425,7 @@ class DataSet:
 
         :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
             ``Query`` 对象, 则直接使用.
+        :param limit: 返回结果的最大数量.
         """
         key = (self.cache_key, str(query), limit)
         if key in self.cache:

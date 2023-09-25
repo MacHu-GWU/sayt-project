@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import typing as T
-import time
 import uuid
 import random
 
@@ -184,7 +183,7 @@ class TestDataset:
 
         query = "police"
         res = ds.search(query)
-        rprint(res)
+        # rprint(res)
 
 
 if __name__ == "__main__":

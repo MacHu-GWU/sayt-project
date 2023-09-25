@@ -1,7 +1,8 @@
 # User Settings
 sayt.egg-info/
 tmp/
-
+.index/
+.cache/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

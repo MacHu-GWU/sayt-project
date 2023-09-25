@@ -1,5 +1,5 @@
 
-.. image:: https://readthedocs.org/projects/sayt/badge/?version=latest
+.. .. image:: https://readthedocs.org/projects/sayt/badge/?version=latest
     :target: https://sayt.readthedocs.io/en/latest/
     :alt: Documentation Status
 
@@ -26,10 +26,10 @@
 
 ------
 
-.. image:: https://img.shields.io/badge/Link-Document-blue.svg
+.. .. image:: https://img.shields.io/badge/Link-Document-blue.svg
     :target: https://sayt.readthedocs.io/en/latest/
 
-.. image:: https://img.shields.io/badge/Link-API-blue.svg
+.. .. image:: https://img.shields.io/badge/Link-API-blue.svg
     :target: https://sayt.readthedocs.io/en/latest/py-modindex.html
 
 .. image:: https://img.shields.io/badge/Link-Install-blue.svg
@@ -50,10 +50,13 @@
 
 Welcome to ``sayt`` (Search as you type) Documentation
 ==============================================================================
-``sayt`` (Search as you type) is a Python library provide Google liked searching experience using your own dataset.
+``sayt`` (Search as you type) is a Python library provide Google liked searching experience using your own dataset. It focus on quickly indexing your own dataset and start searching on it. ``sayt`` is not a full text search database, it doesn't support update/delete operation on your dataset, if your dataset is changed, ``sayt`` will delete the old one and re-index everything.
 
-1. Support ngram search, full text search, fuzzy search.
-2. Cached search.
+Features:
+
+1. Support id search, ngram search, full text search, fuzzy search, range search.
+2. Query results are automatically cached, and will expire based on your configuration.
+3.
 
 
 .. _install:
