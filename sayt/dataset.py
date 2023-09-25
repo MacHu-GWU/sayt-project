@@ -390,13 +390,15 @@ class DataSet:
         """
         Remove the cache for this dataset.
         """
-        self.cache.evict(tag=self.cache_tag)
+        if Path(self.cache.directory).exists():
+            self.cache.evict(tag=self.cache_tag)
 
     def remove_all_cache(self):  # pragma: no cover
         """
         Remove all cache in the cache directory.
         """
-        self.cache.clear()
+        if Path(self.cache.directory).exists():
+            self.cache.clear()
 
     def _parse_query(self, query_str: str) -> whoosh.query.Query:
         """
