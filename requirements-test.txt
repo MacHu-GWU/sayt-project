@@ -1,0 +1,6 @@
+# This requirements file should only include dependencies for testing
+pytest                                  # test framework
+pytest-cov                              # coverage test
+fixa>=0.10.2,<1.0.0
+Faker
+rich
