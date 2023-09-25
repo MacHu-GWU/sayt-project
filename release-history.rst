@@ -15,6 +15,12 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
-0.1.1 (2023-09-24)
+0.1.1 (2023-09-25)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Features and Improvements**
+
 - First release
+- Add the following public API:
+    - ``sayt.api.Field``
+    - ``sayt.api.DataSet``
+    - ``sayt.api.exc``
