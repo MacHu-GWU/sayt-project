@@ -5,6 +5,21 @@ from sayt import api
 
 def test():
     _ = api
+    _ = api.BaseField
+    _ = api.StoredField
+    _ = api.IdField
+    _ = api.IdListField
+    _ = api.KeywordField
+    _ = api.TextField
+    _ = api.NumericField
+    _ = api.DatetimeField
+    _ = api.BooleanField
+    _ = api.NgramField
+    _ = api.NgramWordsField
+    _ = api.T_Field
+    _ = api.DataSet
+    _ = api.exc
+    _ = api.exc.MalformedDatasetSettingError
 
 
 if __name__ == "__main__":

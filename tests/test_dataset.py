@@ -12,9 +12,17 @@ from rich import print as rprint
 
 from sayt.paths import dir_project_root
 from sayt.dataset import (
+    StoredField,
+    IdField,
+    IdListField,
+    KeywordField,
+    TextField,
+    NumericField,
+    DatetimeField,
+    BooleanField,
+    NgramField,
+    NgramWordsField,
     DataSet,
-    Field,
-    MalformedFieldSettingError,
     MalformedDatasetSettingError,
 )
 
@@ -24,11 +32,9 @@ fake = faker.Faker()
 
 class TestField:
     def test_error(self):
-        with pytest.raises(MalformedFieldSettingError):
-            Field(name="myfield", type_is_phrase=True, type_is_numeric=True)
-
-        with pytest.raises(MalformedFieldSettingError):
-            Field(name="myfield", is_sortable=True)
+        field = BooleanField(name="bool_field")
+        assert field._is_sortable() is False
+        assert field._is_ascending() is False
 
 
 class TestDataset:
@@ -37,28 +43,19 @@ class TestDataset:
             dir_index=dir_project_root.joinpath(".index"),
             index_name="my-dataset",
             fields=[
-                Field(
-                    name="id",
-                    type_is_store=True,
-                    type_is_id=True,
-                ),
-                Field(
-                    name="title",
-                    type_is_store=True,
-                    type_is_phrase=True,
-                ),
-                Field(
+                IdField(name="id", stored=True),
+                TextField(name="title", stored=True),
+                NgramField(
                     name="author",
-                    type_is_store=True,
-                    type_is_ngram=True,
-                    ngram_minsize=2,
-                    ngram_maxsize=6,
+                    stored=True,
+                    minsize=2,
+                    maxsize=6,
                 ),
-                Field(
+                NumericField(
                     name="year",
-                    type_is_store=True,
-                    type_is_numeric=True,
-                    is_sortable=True,
+                    stored=True,
+                    sortable=True,
+                    ascending=False,
                 ),
             ],
             cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
@@ -183,7 +180,7 @@ class TestDataset:
 
         query = "police"
         res = ds.search(query)
-        # rprint(res)
+        rprint(res)
 
 
 if __name__ == "__main__":

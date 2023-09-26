@@ -40,83 +40,208 @@ import whoosh.sorting
 from whoosh.index import open_dir, create_in, FileIndex, exists_in
 from diskcache import Cache
 
-from .exc import MalformedFieldSettingError, MalformedDatasetSettingError
-from .utils import is_no_overlap
+from .exc import MalformedDatasetSettingError
 from .compat import cached_property
 
 
 @dataclasses.dataclass
-class Field:
-    """
-    Defines how do you want to store / index this field for full text search:
-
-    :param name: the name of the field
-    :param type_is_store: if True, the value is only stored but not indexed for
-        search. Usually it can be used to dynamically construct value for argument
-        (the action when you press enter), or for auto complete (the action
-        when you press tab)
-    :param type_is_ngram: if True, the value is index using ngram. It matches
-        any character shorter than N characters.
-        https://whoosh.readthedocs.io/en/latest/ngrams.html.
-    :param type_is_phrase: if True, the value is indexed using phrase. Only
-        case-insensitive phrase will be matched. See
-        https://whoosh.readthedocs.io/en/latest/schema.html#built-in-field-types
-    :param type_is_keyword: if True, the value is indexed using keyword. The
-        keyword has to be exactly matched. See
-        https://whoosh.readthedocs.io/en/latest/schema.html#built-in-field-types
-    :param type_is_numeric: if True, the value is indexed using number. The
-        number field is not used for searching, it is only used for sorting. See
-        https://whoosh.readthedocs.io/en/latest/schema.html#built-in-field-types
-    :param ngram_minsize: minimal number of character to match, default is 2.
-    :param ngram_maxsize: maximum number of character to match, default is 10.
-    :param keyword_lowercase: for keyword type field, is the match case-sensitive?
-        default True (not sensitive).
-    :param keyword_commas: is the delimiter of keyword is comma or space?
-    :param weight: the weight of the field for sorting in the search result.
-        default is 1.0.
-    :param is_sortable: is the field will be used for sorting? If True, the field
-        has to be stored.
-    :param is_sort_ascending: is the field will be used for sort ascending?
-    """
-
+class BaseField:
     name: str = dataclasses.field()
-    type_is_store: bool = dataclasses.field(default=False)
-    type_is_id: bool = dataclasses.field(default=False)
-    type_is_ngram: bool = dataclasses.field(default=False)
-    type_is_phrase: bool = dataclasses.field(default=False)
-    type_is_keyword: bool = dataclasses.field(default=False)
-    type_is_numeric: bool = dataclasses.field(default=False)
-    ngram_minsize: int = dataclasses.field(default=2)
-    ngram_maxsize: int = dataclasses.field(default=10)
-    keyword_lowercase: bool = dataclasses.field(default=True)
-    keyword_commas: bool = dataclasses.field(default=True)
-    weight: float = dataclasses.field(default=1.0)
-    is_sortable: bool = dataclasses.field(default=False)
-    is_sort_ascending: bool = dataclasses.field(default=True)
 
-    def __post_init__(self):
-        # do some validation
-        flag = sum(
-            [
-                self.type_is_id,
-                self.type_is_ngram,
-                self.type_is_phrase,
-                self.type_is_keyword,
-                self.type_is_numeric,
-            ]
-        )
-        if flag <= 1:
-            pass
-        else:
-            msg = (
-                f"you have to specify one and only one index type for field {self.name!r}, "
-                f"valid types are: store, id, ngram, phrase, keyword, numeric."
-            )
-            raise MalformedFieldSettingError(msg)
+    def _is_sortable(self) -> bool:
+        try:
+            return self.sortable
+        except AttributeError:
+            return False
 
-        if self.is_sortable is True and self.type_is_store is False:
-            msg = f"you have to use store field for sorting by {self.name!r}!"
-            raise MalformedFieldSettingError(msg)
+    def _is_ascending(self) -> bool:
+        try:
+            return self.ascending
+        except AttributeError:
+            return False
+
+
+@dataclasses.dataclass
+class StoredField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.STORED
+    """
+
+    pass
+
+
+@dataclasses.dataclass
+class IdField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.ID
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    unique: bool = dataclasses.field(default=False)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+    analyzer: T.Optional[str] = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass
+class IdListField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.IDLIST
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    unique: bool = dataclasses.field(default=False)
+    expression: T.Optional[str] = dataclasses.field(default=None)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+
+
+@dataclasses.dataclass
+class KeywordField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.KEYWORD
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    lowercase: bool = dataclasses.field(default=False)
+    commas: bool = dataclasses.field(default=False)
+    scorable: bool = dataclasses.field(default=False)
+    unique: bool = dataclasses.field(default=False)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+    vector: T.Optional = dataclasses.field(default=None)
+    analyzer: T.Optional = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass
+class TextField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.TEXT
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    analyzer: T.Optional = dataclasses.field(default=None)
+    phrase: bool = dataclasses.field(default=True)
+    chars: bool = dataclasses.field(default=False)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    multitoken_query: str = dataclasses.field(default="default")
+    spelling: bool = dataclasses.field(default=False)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+    lang: T.Optional = dataclasses.field(default=None)
+    vector: T.Optional = dataclasses.field(default=None)
+    spelling_prefix: str = dataclasses.field(default="spell_")
+
+
+@dataclasses.dataclass
+class NumericField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.NUMERIC
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    numtype: T.Union[T.Type[int], T.Type[float]] = dataclasses.field(default=int)
+    bits: int = dataclasses.field(default=32)
+    unique: bool = dataclasses.field(default=False)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    decimal_places: int = dataclasses.field(default=0)
+    shift_step: int = dataclasses.field(default=4)
+    signed: bool = dataclasses.field(default=True)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+    default: T.Optional[T.Union[int, float]] = dataclasses.field(default=None)
+
+
+@dataclasses.dataclass
+class DatetimeField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.DATETIME
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    unique: bool = dataclasses.field(default=False)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+
+
+@dataclasses.dataclass
+class BooleanField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.BOOLEAN
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+
+
+@dataclasses.dataclass
+class NgramField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.NGRAM
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    minsize: int = dataclasses.field(default=2)
+    maxsize: int = dataclasses.field(default=4)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    queryor: bool = dataclasses.field(default=False)
+    phrase: bool = dataclasses.field(default=False)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+
+
+@dataclasses.dataclass
+class NgramWordsField(BaseField):
+    """
+    Ref: https://whoosh.readthedocs.io/en/latest/api/fields.html#whoosh.fields.NGRAMWORDS
+    """
+
+    stored: bool = dataclasses.field(default=False)
+    minsize: int = dataclasses.field(default=2)
+    maxsize: int = dataclasses.field(default=4)
+    field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
+    queryor: bool = dataclasses.field(default=False)
+    phrase: bool = dataclasses.field(default=False)
+    tokenizer: T.Optional = dataclasses.field(default=None)
+    at: T.Optional[str] = dataclasses.field(default=None)
+    sortable: bool = dataclasses.field(default=False)
+    ascending: bool = dataclasses.field(default=True)
+
+
+_whoosh_field_mapper = {
+    StoredField: whoosh.fields.STORED,
+    IdField: whoosh.fields.ID,
+    IdListField: whoosh.fields.IDLIST,
+    KeywordField: whoosh.fields.KEYWORD,
+    TextField: whoosh.fields.TEXT,
+    NumericField: whoosh.fields.NUMERIC,
+    DatetimeField: whoosh.fields.DATETIME,
+    BooleanField: whoosh.fields.BOOLEAN,
+    NgramField: whoosh.fields.NGRAM,
+    NgramWordsField: whoosh.fields.NGRAMWORDS,
+}
+
+T_Field = T.Union[
+    StoredField,
+    IdField,
+    IdListField,
+    KeywordField,
+    TextField,
+    NumericField,
+    DatetimeField,
+    BooleanField,
+    NgramField,
+    NgramWordsField,
+]
+
+
+def _to_whoosh_field(field: BaseField) -> whoosh.fields.SpellField:
+    kwargs = dataclasses.asdict(field)
+    kwargs.pop("name")
+    if "ascending" in kwargs:
+        kwargs.pop("ascending")
+    return _whoosh_field_mapper[field.__class__](**kwargs)
 
 
 @dataclasses.dataclass
@@ -140,7 +265,7 @@ class DataSet:
 
     dir_index: Path = dataclasses.field()
     index_name: str = dataclasses.field()
-    fields: T.List[Field] = dataclasses.field()
+    fields: T.List[T_Field] = dataclasses.field()
 
     cache: Cache = dataclasses.field()
     cache_key: str = dataclasses.field()
@@ -159,29 +284,8 @@ class DataSet:
             msg = f"you have duplicate field names in your fields: {self._field_names}"
             raise MalformedDatasetSettingError(msg)
 
-    def _check_id_fields(self):  # pragma: no cover
-        if len(self._id_fields) > 1:
-            msg = "you can have at most one id field!"
-            raise MalformedDatasetSettingError(msg)
-
-    def _check_fields_index_type(self):  # pragma: no cover
-        if not is_no_overlap(
-            [
-                self._id_fields,
-                self._ngram_fields,
-                self._phrase_fields,
-                self._keyword_fields,
-            ]
-        ):
-            msg = (
-                "`ngram_fields`, `phrase_fields` and `keyword_fields` "
-                "should not have any overlaps!"
-            )
-            raise MalformedDatasetSettingError(msg)
-
     def _validate_attributes(self):
         self._check_fields_name()
-        self._check_fields_index_type()
 
     def __post_init__(self):
         # do some validation
@@ -189,53 +293,72 @@ class DataSet:
             self._validate_attributes()
 
     @cached_property
-    def _fields_mapper(self) -> T.Dict[str, Field]:
+    def _field_names(self) -> T.List[str]:
         """
-        从 field name 到 field 对象的映射
+        all field name list.
+        """
+        return [field.name for field in self.fields]
+
+    @cached_property
+    def _fields_mapper(self) -> T.Dict[str, T_Field]:
+        """
+        field name to field object mapper.
         """
         return {field.name: field for field in self.fields}
 
     @cached_property
-    def _store_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_store]
+    def _stored_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, StoredField)]
 
     @cached_property
-    def _id_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_id]
+    def _id_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, IdField)]
 
     @cached_property
-    def _ngram_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_ngram]
+    def _idlist_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, IdListField)]
 
     @cached_property
-    def _phrase_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_phrase]
+    def _keyword_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, KeywordField)]
 
     @cached_property
-    def _keyword_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_keyword]
+    def _text_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, TextField)]
 
     @cached_property
-    def _numeric_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.type_is_numeric]
+    def _numeric_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, NumericField)]
+
+    @cached_property
+    def _datetime_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, DatetimeField)]
+
+    @cached_property
+    def _boolean_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, BooleanField)]
+
+    @cached_property
+    def _ngram_fields(self) -> T.List[str]:  # pragma: no cover
+        return [field.name for field in self.fields if isinstance(field, NgramField)]
+
+    @cached_property
+    def _ngramwords_fields(self) -> T.List[str]:  # pragma: no cover
+        return [
+            field.name for field in self.fields if isinstance(field, NgramWordsField)
+        ]
 
     @cached_property
     def _searchable_fields(self) -> T.List[str]:
-        return (
-            self._id_fields
-            + self._ngram_fields
-            + self._phrase_fields
-            + self._keyword_fields
-            + self._numeric_fields
-        )
+        return [
+            field.name
+            for field in self.fields
+            if isinstance(field, StoredField) is False
+        ]
 
     @cached_property
     def _sortable_fields(self) -> T.List[str]:
-        return [field.name for field in self.fields if field.is_sortable]
-
-    @cached_property
-    def _field_names(self) -> T.List[str]:
-        return [field.name for field in self.fields]
+        return [field.name for field in self.fields if field._is_sortable()]
 
     def _create_whoosh_schema(self) -> whoosh.fields.Schema:
         """
@@ -246,46 +369,7 @@ class DataSet:
         schema_classname = str(schema_classname)
         attrs = OrderedDict()
         for field in self.fields:
-            if field.type_is_id:
-                whoosh_field = whoosh.fields.ID(
-                    stored=field.type_is_id,
-                    unique=True,
-                    field_boost=field.weight,
-                    sortable=field.is_sortable,
-                )
-            elif field.type_is_ngram:
-                whoosh_field = whoosh.fields.NGRAM(
-                    stored=field.type_is_store,
-                    minsize=field.ngram_minsize,
-                    maxsize=field.ngram_maxsize,
-                    field_boost=field.weight,
-                    sortable=field.is_sortable,
-                )
-            elif field.type_is_phrase:
-                whoosh_field = whoosh.fields.TEXT(
-                    stored=field.type_is_store,
-                    field_boost=field.weight,
-                    sortable=field.is_sortable,
-                )
-            elif field.type_is_keyword:  # pragma: no cover
-                whoosh_field = whoosh.fields.KEYWORD(
-                    stored=field.type_is_store,
-                    lowercase=field.keyword_lowercase,
-                    commas=field.keyword_commas,
-                    field_boost=field.weight,
-                    sortable=field.is_sortable,
-                )
-            elif field.type_is_numeric:
-                whoosh_field = whoosh.fields.NUMERIC(
-                    stored=field.type_is_store,
-                    field_boost=field.weight,
-                    sortable=field.is_sortable,
-                )
-            elif field.type_is_store:  # pragma: no cover
-                whoosh_field = whoosh.fields.STORED()
-            else:  # pragma: no cover
-                raise NotImplementedError
-            attrs[field.name] = whoosh_field
+            attrs[field.name] = _to_whoosh_field(field)
         SchemaClass = type(schema_classname, (whoosh.fields.SchemaClass,), attrs)
         schema = SchemaClass()
         return schema
@@ -446,7 +530,7 @@ class DataSet:
             multi_facet = whoosh.sorting.MultiFacet()
             for field_name in self._sortable_fields:
                 field = self._fields_mapper[field_name]
-                multi_facet.add_field(field_name, reverse=not field.is_sort_ascending)
+                multi_facet.add_field(field_name, reverse=not field._is_ascending())
             search_kwargs["sortedby"] = multi_facet
 
         idx = self._get_index()
