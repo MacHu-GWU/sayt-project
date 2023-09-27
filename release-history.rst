@@ -15,6 +15,19 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.2.2 (2023-09-26)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Minor Improvements**
+
+- Allow user to use pass in ``dir_cache`` when constructing ``DataSet`` object. It gives user more control on creating the cache object.
+
+**Bugfixes**
+
+- Fix a bug that ``NgramWordsField`` should not have ``phrase`` attribute.
+
+**Miscellaneous**
+
+
 0.2.1 (2023-09-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **💥 Breaking change**

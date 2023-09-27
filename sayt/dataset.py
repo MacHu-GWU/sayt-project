@@ -243,6 +243,13 @@ def _to_whoosh_field(field: BaseField) -> whoosh.fields.SpellField:
     return _whoosh_field_mapper[field.__class__](**kwargs)
 
 
+class _Nothing:
+    pass
+
+
+NOTHING = _Nothing()
+
+
 @dataclasses.dataclass
 class DataSet:
     """
@@ -257,17 +264,18 @@ class DataSet:
     :param cache: diskcache 缓存对象.
     :param cache_key: 该 dataset 被缓存时所用的 key.
     :param cache_tag: 该 dataset 被缓存时所用的 tag, 这个 tag 可以被用作清除缓存的时候的过滤条件.
-    :param cache_expire: cache 的缓存失效实践
+    :param cache_expire: cache 的缓存失效时间
     :param skip_validation: 是否跳过对 Dataset 初始化的 validation 检查. 默认是不跳过,
         也就是进行检查.
     """
 
-    dir_index: Path = dataclasses.field()
-    index_name: str = dataclasses.field()
-    fields: T.List[T_Field] = dataclasses.field()
+    dir_index: Path = dataclasses.field(default=NOTHING)
+    index_name: str = dataclasses.field(default=NOTHING)
+    fields: T.List[T_Field] = dataclasses.field(default_factory=list)
 
-    cache: Cache = dataclasses.field()
-    cache_key: str = dataclasses.field()
+    dir_cache: T.Optional[Path] = dataclasses.field(default=None)
+    cache: Cache = dataclasses.field(default=None)
+    cache_key: str = dataclasses.field(default=NOTHING)
     cache_tag: T.Optional[str] = dataclasses.field(default=None)
     cache_expire: T.Optional[int] = dataclasses.field(default=None)
 
@@ -286,8 +294,24 @@ class DataSet:
     def _validate_attributes(self):
         self._check_fields_name()
 
+    def _init_attrs(self):
+        self.dir_index = Path(self.dir_index)
+        if self.dir_cache is not None:  # pragma: no cover
+            self.dir_cache = Path(self.dir_cache)
+        if self.cache is None:  # pragma: no cover
+            self.cache = Cache(str(self.dir_cache))
+        else:
+            self.dir_cache = Path(self.cache.directory)
+
+        for k, v in dataclasses.asdict(self).items():
+            if isinstance(v, _Nothing):  # pragma: no cover
+                raise ValueError(
+                    f"arg {k!r} is required for "
+                    f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+                )
+
     def __post_init__(self):
-        # do some validation
+        self._init_attrs()
         if self.skip_validation is False:
             self._validate_attributes()
 
