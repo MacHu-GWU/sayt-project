@@ -536,9 +536,9 @@ class DataSet:
             ``Query`` 对象, 则直接使用.
         :param limit: 返回结果的最大数量.
         """
-        key = (self.cache_key, str(query), limit)
-        if key in self.cache:
-            return self.cache.get(key)
+        query_cache_key = (self.cache_key, str(query), limit)
+        if query_cache_key in self.cache:
+            return self.cache.get(query_cache_key)
 
         if isinstance(query, str):
             q = self._parse_query(query)
@@ -560,5 +560,10 @@ class DataSet:
         with idx.searcher() as searcher:
             doc_list = [hit.fields() for hit in searcher.search(**search_kwargs)]
 
-        self.cache.set(key, doc_list, expire=self.cache_expire)
+        self.cache.set(
+            query_cache_key,
+            doc_list,
+            expire=self.cache_expire,
+            tag=self.cache_tag,
+        )
         return doc_list
