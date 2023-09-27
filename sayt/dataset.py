@@ -202,7 +202,6 @@ class NgramWordsField(BaseField):
     maxsize: int = dataclasses.field(default=4)
     field_boost: T.Union[int, float] = dataclasses.field(default=1.0)
     queryor: bool = dataclasses.field(default=False)
-    phrase: bool = dataclasses.field(default=False)
     tokenizer: T.Optional = dataclasses.field(default=None)
     at: T.Optional[str] = dataclasses.field(default=None)
     sortable: bool = dataclasses.field(default=False)
@@ -504,7 +503,7 @@ class DataSet:
     def search(
         self,
         query: T.Union[str, whoosh.query.Query],
-        limit=20,
+        limit: int = 20,
     ) -> T.List[dict]:
         """
         Use full-text search for result.
