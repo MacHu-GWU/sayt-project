@@ -15,11 +15,18 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.3.1 (2023-09-28)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Features and Improvements**
+
+- Add ``simple_response: bool = True`` option to ``DataSet.search(...)`` method, allow to return elasticsearch HTTP response styled result.
+
+
 0.2.3 (2023-09-26)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **Bugfixes**
 
-- Fix a bug that when ``DataSet.search`` method forget to set the result cache along with the tag. So that this cache cannot be cleared by ``DataSet.clear_cache`` method.
+- Fix a bug that when ``DataSet.search(...)`` method forget to set the result cache along with the tag. So that this cache cannot be cleared by ``DataSet.clear_cache`` method.
 
 
 0.2.2 (2023-09-26)
