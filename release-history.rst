@@ -28,6 +28,10 @@ x.y.z (Backlog)
 
 0.3.1 (2023-09-28)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**💥 Breaking change**
+
+- Drop support for Python3.7 because of the ``TypedDict`` type hint.
+
 **Features and Improvements**
 
 - Add ``simple_response: bool = True`` option to ``DataSet.search(...)`` method, allow to return elasticsearch HTTP response styled result.
