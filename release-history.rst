@@ -15,6 +15,17 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.3.2 (2023-09-28)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Minor Improvements**
+
+- the final whoosh index name is the ``DataSet.index_name`` as it is. we no longer automatically hash the index name
+
+**Bugfixes**
+
+- fix a bug the cache_tag is not correctly set in ``DataSet.search(...)`` method.
+
+
 0.3.1 (2023-09-28)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **Features and Improvements**

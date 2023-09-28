@@ -264,9 +264,7 @@ class DataSet:
 
     :param dir_index: 索引所在的文件夹. 如果不存在, 会自动创建.
     :param index_name: 索引的名字. 一个索引是类似于数据库中的数据表的概念. 在同一个索引文件夹
-        下不同的索引会被分散到不同的文件中, 属于同一个索引的文件会有相同的前缀. 这个最终传给
-        whoosh 的索引名是 ``index_name`` 的 MD5 哈希, 这样可以避免索引名之间共享前缀导致
-        磁盘寻址搜索性能下降.
+        下不同的索引会被分散到不同的文件中, 属于同一个索引的文件会有相同的前缀.
     :param fields: 定义了这个数据集将会如何被索引.
     :param cache: diskcache 缓存对象.
     :param cache_key: 该 dataset 被缓存时所用的 key.
@@ -416,25 +414,19 @@ class DataSet:
     # --------------------------------------------------------------------------
     __2_INDEX = None
 
-    @property
-    def normalized_index_name(self) -> str:
-        m = hashlib.md5()
-        m.update(self.index_name.encode("utf-8"))
-        return m.hexdigest()
-
     def _get_index(self) -> FileIndex:
         """
         Get the whoosh index object. If the index does not exist, create one.
         if the index exists, open it.
         """
-        if exists_in(str(self.dir_index), indexname=self.normalized_index_name):
-            idx = open_dir(str(self.dir_index), indexname=self.normalized_index_name)
+        if exists_in(str(self.dir_index), indexname=self.index_name):
+            idx = open_dir(str(self.dir_index), indexname=self.index_name)
         else:
             self.dir_index.mkdir(parents=True, exist_ok=True)
             idx = create_in(
                 dirname=str(self.dir_index),
                 schema=self.schema,
-                indexname=self.normalized_index_name,
+                indexname=self.index_name,
             )
         return idx
 
@@ -442,11 +434,11 @@ class DataSet:
         """
         Remove the whoosh index for this dataset.
         """
-        if exists_in(str(self.dir_index), indexname=self.normalized_index_name):
+        if exists_in(str(self.dir_index), indexname=self.index_name):
             idx = create_in(
                 dirname=str(self.dir_index),
                 schema=self.schema,
-                indexname=self.normalized_index_name,
+                indexname=self.index_name,
             )
             idx.close()
 
@@ -626,7 +618,7 @@ class DataSet:
                     )
                 et = time.process_time()
                 result = {
-                    "index": self.normalized_index_name,
+                    "index": self.index_name,
                     "took": int((et - st) // 0.001),
                     "size": len(hits),
                     "cache": False,
@@ -638,6 +630,6 @@ class DataSet:
             query_cache_key,
             result,
             expire=self.cache_expire,
-            tag=f"{self.cache_tag}____{simple_response}",
+            tag=self.cache_tag,
         )
         return result
