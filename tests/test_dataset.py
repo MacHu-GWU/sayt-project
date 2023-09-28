@@ -180,7 +180,18 @@ class TestDataset:
 
         query = "police"
         res = ds.search(query)
-        rprint(res)
+        # rprint(res)
+        assert isinstance(res, list)
+
+        res = ds.search(query, simple_response=False)
+        # rprint(res)
+        assert isinstance(res, dict)
+        assert res["cache"] is False
+
+        res = ds.search(query, simple_response=False)
+        # rprint(res)
+        assert isinstance(res, dict)
+        assert res["cache"] is True
 
 
 if __name__ == "__main__":

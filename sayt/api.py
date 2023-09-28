@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
 
+"""
+Usage::
+
+    import sayt.api as sayt
+
+    sayt.DataSet(...)
+"""
+
 from .dataset import BaseField
 from .dataset import StoredField
 from .dataset import IdField

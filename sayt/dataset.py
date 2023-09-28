@@ -1,30 +1,11 @@
 # -*- coding: utf-8 -*-
 
 """
-This module implements the abstraction of the dataset settings, and convert the
-settings to ``whoosh.fields.Schema`` Class.
-
-**Overview**
-
-**使用场景**
-
-从任何地方获取许多条结构化的数据, 每一条数据都是一个字典, 例如我们的数据集是图书数据::
-
-    {
-        "isbn": "978-0-201-03801-1",
-        "book_name": "The Art of Computer Programming",
-        "author": "Donald Knuth",
-        "date": "1968-07-01",
-    }
-
-然后我们需要对这些数据进行全文搜索. 首先, 我们要定义这批数据要如何被索引 (或者说如何被搜索到).
-例如希望对 book_name 能进行 ngram 搜索, 对与 Author 则是进行 phrase 搜索. 而一条数据的唯一
-id 则是 isbn.
-
-
+The core feature of Sayt.
 """
 
 import typing as T
+import time
 import shutil
 import os
 import hashlib
@@ -248,6 +229,32 @@ class _Nothing:
 
 
 NOTHING = _Nothing()
+
+
+class Hit(T.TypedDict):
+    """
+    Represent a hit in the search result.
+    """
+
+    _id: int
+    _score: int
+    _source: T.Dict[str, T.Any]
+
+
+class Result(T.TypedDict):
+    """
+    Return type of the :meth:`DataSet.search` method when ``simple_response = False``.
+
+    Reference:
+
+    - https://www.elastic.co/guide/en/elasticsearch/reference/current/search-your-data.html
+    """
+
+    index: str
+    took: int
+    size: int
+    cache: bool
+    hits: T.List[Hit]
 
 
 @dataclasses.dataclass
@@ -528,18 +535,60 @@ class DataSet:
         self,
         query: T.Union[str, whoosh.query.Query],
         limit: int = 20,
-    ) -> T.List[dict]:
+        simple_response: bool = True,
+    ) -> T.Union[T.List[dict], Result]:
         """
-        Use full-text search for result.
+        Run full-text search. For details about the query language, check this
+        `link <https://whoosh.readthedocs.io/en/latest/querylang.html>`_.
+
+        From 0.3.1, you can set ``simple_response`` to ``False`` to get the
+        elasticsearch-HTTP-response styled result. For example::
+
+            {
+                'index': '3dd28d068ad007367ac7816d7752d382',
+                'took': 5,
+                'size': 4, # milliseconds
+                'cache': False,
+                'hits': [
+                    {
+                        '_id': 470,
+                        '_score': -2147485651,
+                        '_source': {
+                            'id': 'c7242d2f47cb4aa2a1eebd75c7e81bbf',
+                            'title': 'More parent message heavy police development how simply.',
+                            'author': 'Margaret Ellis',
+                            'year': 2003
+                        }
+                    },
+                    {
+                        '_id': 456,
+                        '_score': -2147485642,
+                        '_source': {
+                            'id': 'ff91fd8545c64af59637caa043435f50',
+                            'author': 'Laura Walters',
+                            'title': 'Discover police discussion kitchen.',
+                            'year': 1994
+                        }
+                    },
+                    ...
+                ]
+            }
 
         :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
             ``Query`` 对象, 则直接使用.
         :param limit: 返回结果的最大数量.
+        :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
+            类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
         """
-        query_cache_key = (self.cache_key, str(query), limit)
+        # check cache
+        query_cache_key = (self.cache_key, str(query), limit, simple_response)
         if query_cache_key in self.cache:
-            return self.cache.get(query_cache_key)
+            result = self.cache.get(query_cache_key)
+            if simple_response is False:
+                result["cache"] = True
+            return result
 
+        # preprocess query and search arguments
         if isinstance(query, str):
             q = self._parse_query(query)
         else:  # pragma: no cover
@@ -556,14 +605,39 @@ class DataSet:
                 multi_facet.add_field(field_name, reverse=not field._is_ascending())
             search_kwargs["sortedby"] = multi_facet
 
+        # run search
         idx = self._get_index()
         with idx.searcher() as searcher:
-            doc_list = [hit.fields() for hit in searcher.search(**search_kwargs)]
+            if simple_response:
+                res = searcher.search(**search_kwargs)
+                doc_list = [hit.fields() for hit in res]
+                result = doc_list
+            else:
+                st = time.process_time()
+                res = searcher.search(**search_kwargs)
+                hits = list()
+                for hit in res:
+                    hits.append(
+                        {
+                            "_id": hit.docnum,
+                            "_score": hit.score,
+                            "_source": hit.fields(),
+                        }
+                    )
+                et = time.process_time()
+                result = {
+                    "index": self.normalized_index_name,
+                    "took": int((et - st) // 0.001),
+                    "size": len(hits),
+                    "cache": False,
+                    "hits": hits,
+                }
 
+        # set cache
         self.cache.set(
             query_cache_key,
-            doc_list,
+            result,
             expire=self.cache_expire,
-            tag=self.cache_tag,
+            tag=f"{self.cache_tag}____{simple_response}",
         )
-        return doc_list
+        return result
