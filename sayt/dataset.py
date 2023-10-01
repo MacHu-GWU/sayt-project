@@ -717,6 +717,51 @@ class RefreshableDataSet:
         automatically expired if the dataset is expired.
     :param context: additional context object that will be used in cache key
         evaluation and document extraction.
+
+    Example::
+
+        # the downloader function takes an environment name as input,
+        # and returns a list of VM machine records in that environment.
+        def downloader(env: str) -> T.List[T.Dict[str, T.Any]]:
+            n = 10
+            return [
+                {"id": ith, "name": f"{ith}th-{env}-machine"}
+                for ith in range(1, 1 + n)
+            ]
+
+        # we assume that different download kwargs will result in different
+        # dataset, so the cache key should also be different
+        # cache_key_def is a callable function that takes the download_kwargs
+        # and optional context data as input, and returns the cache key.
+        def cache_key_def(
+            download_kwargs: T_KWARGS,
+            context: T_CONTEXT,
+        ):
+            return [download_kwargs["env"]]
+
+        # extractor is a function that converts the record into whoosh document
+        def extractor(
+            record: T_RECORD,
+            download_kwargs: T_KWARGS,
+            context: T_CONTEXT,
+        ) -> T_RECORD:
+            greeting = context["greeting"]
+            name = record["name"]
+            return {"message": f"{greeting} {name}", "raw": record}
+
+        # we would like to use ngram search on message field
+        # and store the raw data as it is
+        fields = [
+            NgramWordsField(
+                name="message",
+                stored=True,
+                minsize=2,
+                maxsize=6,
+            ),
+            StoredField(
+                name="raw",
+            ),
+        ]
     """
 
     downloader: T_DOWNLOADER = dataclasses.field()
@@ -777,7 +822,15 @@ class RefreshableDataSet:
         limit: int = 10,
         simple_response: bool = False,
     ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
-        """ """
+        """
+        Similar to :meth:`DataSet.search`, but this method will automatically
+        download the data when necessary.
+
+        :param download_kwargs: optional keyword arguments for the ``downloader``
+            callable function.
+        :param refresh_data: if True, then will force to download the data
+            and refresh the index and cache.
+        """
         cache_key = get_cache_key(
             self.cache_key_def,
             download_kwargs=download_kwargs,
@@ -870,7 +923,15 @@ class RefreshableDataSet:
         limit: int = 10,
         simple_response: bool = False,
     ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
-        """ """
+        """
+        Similar to :meth:`DataSet.search`, but this method will automatically
+        download the data when necessary.
+
+        :param download_kwargs: optional keyword arguments for the ``downloader``
+            callable function.
+        :param refresh_data: if True, then will force to download the data
+            and refresh the index and cache.
+        """
         cache_key = get_cache_key(
             self.cache_key_def,
             download_kwargs=download_kwargs,
