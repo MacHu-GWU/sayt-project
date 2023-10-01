@@ -23,7 +23,16 @@ from sayt.dataset import (
     NgramField,
     NgramWordsField,
     DataSet,
+    get_cache_key,
+    RefreshableDataSet,
     MalformedDatasetSettingError,
+    T_RECORD,
+    T_KWARGS,
+    T_DOWNLOADER,
+    T_CACHE_KEY_DEF,
+    T_CONTEXT,
+    T_EXTRACTOR,
+    T_RefreshableDataSetResult,
 )
 
 
@@ -192,6 +201,127 @@ class TestDataset:
         # rprint(res)
         assert isinstance(res, dict)
         assert res["cache"] is True
+
+
+def test_get_cache_key():
+    assert get_cache_key(
+        cache_key_def=["hello", "world"],
+        download_kwargs={},
+        context={},
+    ) == ["hello", "world"]
+
+
+class TestRefreshableDataset:
+    def test(self):
+        def downloader(env: str) -> T.List[T.Dict[str, T.Any]]:
+            # print("get_data() called")
+            n = 10
+            return [
+                {"id": ith, "name": f"{ith}th-{env}-machine"} for ith in range(1, 1 + n)
+            ]
+
+        def cache_key_def(
+            download_kwargs: T_KWARGS,
+            context: T_CONTEXT,
+        ):
+            return [download_kwargs["env"]]
+
+        def extractor(
+            record: T_RECORD,
+            download_kwargs: T_KWARGS,
+            context: T_CONTEXT,
+        ) -> T_RECORD:
+            greeting = context["greeting"]
+            name = record["name"]
+            return {"message": f"{greeting} {name}", "raw": record}
+
+        fields = [
+            NgramWordsField(
+                name="message",
+                stored=True,
+                minsize=2,
+                maxsize=6,
+            ),
+            StoredField(
+                name="raw",
+            ),
+        ]
+        rds = RefreshableDataSet(
+            downloader=downloader,
+            cache_key_def=cache_key_def,
+            extractor=extractor,
+            fields=fields,
+            dir_index=dir_project_root.joinpath(".index"),
+            cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
+            cache_expire=1,
+            context={"greeting": "Hello"},
+        )
+
+        def verify_result(res: T_RefreshableDataSetResult):
+            assert len(res["hits"]) == 3
+            for hit in res["hits"]:
+                message = hit["_source"]["message"]
+                assert "dev" in message
+
+        # version 1
+        res = rds.search_v1(
+            download_kwargs={"env": "dev"},
+            refresh_data=True,
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is True
+        assert res["cache"] is False
+
+        res = rds.search_v1(
+            download_kwargs={"env": "dev"},
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is False
+        assert res["cache"] is True
+
+        res = rds.search_v1(
+            download_kwargs={"env": "dev"},
+            refresh_data=True,
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is True
+        assert res["cache"] is False
+
+        # version 2
+        res = rds.search_v2(
+            download_kwargs={"env": "dev"},
+            refresh_data=True,
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is True
+        assert res["cache"] is False
+
+        res = rds.search_v2(
+            download_kwargs={"env": "dev"},
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is False
+        assert res["cache"] is True
+
+        res = rds.search_v2(
+            download_kwargs={"env": "dev"},
+            refresh_data=True,
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is True
+        assert res["cache"] is False
 
 
 if __name__ == "__main__":

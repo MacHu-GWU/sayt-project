@@ -17,7 +17,17 @@ def test():
     _ = api.NgramField
     _ = api.NgramWordsField
     _ = api.T_Field
+    _ = api.T_Hit
+    _ = api.T_Result
     _ = api.DataSet
+    _ = api.T_RECORD
+    _ = api.T_KWARGS
+    _ = api.T_DOWNLOADER
+    _ = api.T_CACHE_KEY_DEF
+    _ = api.T_CONTEXT
+    _ = api.T_EXTRACTOR
+    _ = api.T_RefreshableDataSetResult
+    _ = api.RefreshableDataSet
     _ = api.exc
     _ = api.exc.MalformedDatasetSettingError
 

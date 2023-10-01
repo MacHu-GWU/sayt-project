@@ -9,8 +9,10 @@ import time
 import shutil
 import os
 import hashlib
+import contextlib
 import dataclasses
 from collections import OrderedDict
+from functools import cached_property
 
 from pathlib import Path
 
@@ -231,7 +233,7 @@ class _Nothing:
 NOTHING = _Nothing()
 
 
-class Hit(T.TypedDict):
+class T_Hit(T.TypedDict):
     """
     Represent a hit in the search result.
     """
@@ -241,7 +243,7 @@ class Hit(T.TypedDict):
     _source: T.Dict[str, T.Any]
 
 
-class Result(T.TypedDict):
+class T_Result(T.TypedDict):
     """
     Return type of the :meth:`DataSet.search` method when ``simple_response = False``.
 
@@ -254,13 +256,21 @@ class Result(T.TypedDict):
     took: int
     size: int
     cache: bool
-    hits: T.List[Hit]
+    hits: T.List[T_Hit]
 
 
 @dataclasses.dataclass
 class DataSet:
     """
     Defines how you want to index your dataset.
+
+    You should run :meth:`DataSet.build_index` to create the index for your
+    dataset, then you can start using :meth:`DataSet.search` to search your
+    data.
+
+    If it is time-consuming to load your dataset, for example, you have to
+    download it from internet, you can consider :class:`RefreshableDataSet` to
+    cache your index and dataset and refresh them when need needed.
 
     :param dir_index: 索引所在的文件夹. 如果不存在, 会自动创建.
     :param index_name: 索引的名字. 一个索引是类似于数据库中的数据表的概念. 在同一个索引文件夹
@@ -475,7 +485,7 @@ class DataSet:
             writer = idx.writer(
                 limitmb=memory_limit, procs=cpu_count, multisegment=True
             )
-        else:
+        else:  # pragma: no cover
             writer = idx.writer(limitmb=memory_limit)
 
         for row in data:
@@ -528,7 +538,7 @@ class DataSet:
         query: T.Union[str, whoosh.query.Query],
         limit: int = 20,
         simple_response: bool = True,
-    ) -> T.Union[T.List[dict], Result]:
+    ) -> T.Union[T.List[dict], T_Result]:
         """
         Run full-text search. For details about the query language, check this
         `link <https://whoosh.readthedocs.io/en/latest/querylang.html>`_.
@@ -633,3 +643,273 @@ class DataSet:
             tag=self.cache_tag,
         )
         return result
+
+
+T_RECORD = T.Dict[str, T.Any]
+T_KWARGS = T.Optional[T.Dict[str, T.Any]]
+T_DOWNLOADER = T.Callable[..., T.Iterable[T_RECORD]]
+T_CACHE_KEY_DEF = T.Union[T.List[str], T.Callable[..., T.List[str]]]
+T_CONTEXT = T.Optional[T.Dict[str, T.Any]]
+T_EXTRACTOR = T.Callable[[T_RECORD, T_KWARGS, T_CONTEXT], T_RECORD]
+
+SEP = "-"
+
+
+def get_cache_key(
+    cache_key_def: T_CACHE_KEY_DEF,
+    download_kwargs: T_KWARGS,
+    context: T_CONTEXT,
+) -> T.List[str]:
+    """
+    Evaluate the final cache key (list of string) from the cache key definition.
+    downloader keyword arguments and optional context data will be used for
+    evaluation.
+    """
+    if callable(cache_key_def):
+        return cache_key_def(download_kwargs=download_kwargs, context=context)
+    else:
+        return cache_key_def
+
+
+def get_md5_hash(s: str) -> str:
+    return hashlib.md5(s.encode("utf-8")).hexdigest()
+
+
+class T_RefreshableDataSetResult(T.TypedDict):
+    """
+    Return type of the :meth:`DataSet.search` method when ``simple_response = False``.
+
+    Reference:
+
+    - https://www.elastic.co/guide/en/elasticsearch/reference/current/search-your-data.html
+    """
+
+    fresh: bool
+    index: str
+    took: int
+    size: int
+    cache: bool
+    hits: T.List[T_Hit]
+
+
+@dataclasses.dataclass
+class RefreshableDataSet:
+    """
+    Similar to :class:`DataSet`, but it supports refreshable data source.
+
+    :param downloader: a callable function that pull the dataset we need, and
+        returns a list of record, each record is a dict data. This function
+        will be called if your cache expired or you force to refresh the data.
+    :param cache_key_def: cache key definition, it can be a literal value
+        as the cache key or a callable function that takes the download kwargs
+        and optional context data as input, and returns the cache key.
+        that returns the cache key. The evaluated value will be used as part of
+        the ``index_name``, ``cache_key`` and ``cache_tag`` naming convention.
+    :param extractor: convert the record into whoosh indexable document,
+        the document schema should match the definition in ``fields``.
+    :param fields: similar to :class:`DataSet`.
+    :param dir_index: similar to :class:`DataSet`.
+    :param dir_cache: similar to :class:`DataSet`.
+    :param cache: similar to :class:`DataSet`.
+    :param cache_expire: how long your cache will expire so you have to
+        re-download your dataset. In refreshable dataset, the query cache never
+        expires if the dataset is not expired. And the query cache will be
+        automatically expired if the dataset is expired.
+    :param context: additional context object that will be used in cache key
+        evaluation and document extraction.
+    """
+
+    downloader: T_DOWNLOADER = dataclasses.field()
+    cache_key_def: T_CACHE_KEY_DEF = dataclasses.field()
+    extractor: T_EXTRACTOR = dataclasses.field()
+    fields: T.List[T_Field] = dataclasses.field()
+    dir_index: Path = dataclasses.field()
+    dir_cache: Path = dataclasses.field(default=None)
+    cache: Cache = dataclasses.field(default=None)
+    cache_expire: int = dataclasses.field(default=None)
+    context: T_CONTEXT = dataclasses.field(default=None)
+
+    def __post_init__(self):
+        if self.dir_cache is not None:  # pragma: no cover
+            self.dir_cache = Path(self.dir_cache)
+        if self.cache is None:  # pragma: no cover
+            # diskcache uses pickle to serialize cache key, we have to hard code
+            # the protocol value to make it consistent across different python
+            self.cache = Cache(str(self.dir_cache), disk_pickle_protocol=5)
+        else:  # pragma: no cover
+            self.dir_cache = Path(self.cache.directory)
+
+    def remove_all_index(self):  # pragma: no cover
+        """
+        Remove all whoosh index in the index directory.
+        """
+        if self.dir_index.exists():
+            shutil.rmtree(self.dir_index, ignore_errors=True)
+
+    def remove_all_cache(self):  # pragma: no cover
+        """
+        Remove all cache in the cache directory.
+        """
+        if Path(self.cache.directory).exists():
+            self.cache.clear()
+
+    # --------------------------------------------------------------------------
+    # Developer Note
+    #
+    # 逻辑上, 如果 download_kwargs 的参数不同, 那么下载下来的应该是不同的 dataset,
+    # 这些 dataset 的 index_name, cache_key, cache_tag 都应该不同. 我们通常有两种
+    # 方式可以实现这一点:
+    #
+    # 1. 每次调用 search 方法的时候都重新创建一个 DataSet 对象, 给他们不同的 index_name.
+    #   这种方法的好处是线程安全, 每次 search 方法的调用都是一个新的 DataSet 对象. 但是坏处是
+    #   会生成很多 DataSet 对象, 并自动调用它底层的 ``__post_init__`` 方法. 比较耗时.
+    # 2. 用一个 cached property 来给 Refreshable dataset 绑定一个 DataSet 对象,
+    #   每次执行 search 方法的时候临时对 index_name 做出修改. 但是在多线程共享一个 DataSet
+    #   对象的时候, 会有线程安全的问题.
+    #
+    # 我们两种方式都实现了, 用户可以自行切换两种方式.
+    # --------------------------------------------------------------------------
+    def search_v1(
+        self,
+        download_kwargs: T_KWARGS = None,
+        refresh_data: bool = False,
+        query: str = None,
+        limit: int = 10,
+        simple_response: bool = False,
+    ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
+        """ """
+        cache_key = get_cache_key(
+            self.cache_key_def,
+            download_kwargs=download_kwargs,
+            context=self.context,
+        )
+        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
+        data_cache_key = cache_key
+        query_cache_tag = SEP.join(cache_key)
+
+        ds = DataSet(
+            dir_index=self.dir_index,
+            index_name=index_name,
+            fields=self.fields,
+            dir_cache=None,
+            cache=self.cache,
+            cache_key=data_cache_key,
+            cache_tag=query_cache_tag,
+            cache_expire=None,
+        )
+
+        if (refresh_data is True) or data_cache_key not in self.cache:
+            fresh = True
+            records = self.downloader(**download_kwargs)
+            docs = [
+                self.extractor(
+                    record,
+                    download_kwargs,
+                    self.context,
+                )
+                for record in records
+            ]
+            ds.build_index(data=docs, rebuild=True)
+            self.cache.set(
+                data_cache_key,
+                index_name,
+                expire=self.cache_expire,
+                tag=query_cache_tag,
+            )
+        else:
+            fresh = False
+        result = ds.search(query=query, limit=limit, simple_response=False)
+        result["fresh"] = fresh
+        if simple_response:  # pragma: no cover
+            return [hit["_source"] for hit in result["hits"]]
+        else:
+            return result
+
+    @cached_property
+    def _ds(self) -> DataSet:
+        return DataSet(
+            dir_index=self.dir_index,
+            index_name=None,
+            fields=self.fields,
+            dir_cache=None,
+            cache=self.cache,
+            cache_key=None,
+            cache_tag=None,
+            cache_expire=None,
+        )
+
+    @contextlib.contextmanager
+    def _temp(
+        self,
+        index_name: str,
+        cache_key: str,
+        cache_tag: str,
+    ):
+        """
+        Temporarily change the index name, cache key and cache tag of the
+        sayt dataset object, and revert it back at the end.
+        """
+        existing_index_name = self._ds.index_name
+        existing_cache_key = self._ds.cache_key
+        existing_cache_tag = self._ds.cache_tag
+        try:
+            self._ds.index_name = index_name
+            self._ds.cache_key = cache_key
+            self._ds.cache_tag = cache_tag
+            yield self
+        finally:
+            self._ds.index_name = existing_index_name
+            self._ds.cache_key = existing_cache_key
+            self._ds.cache_tag = existing_cache_tag
+
+    def search_v2(
+        self,
+        download_kwargs: T_KWARGS = None,
+        refresh_data: bool = False,
+        query: str = None,
+        limit: int = 10,
+        simple_response: bool = False,
+    ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
+        """ """
+        cache_key = get_cache_key(
+            self.cache_key_def,
+            download_kwargs=download_kwargs,
+            context=self.context,
+        )
+        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
+        data_cache_key = cache_key
+        query_cache_tag = SEP.join(cache_key)
+
+        with self._temp(
+            index_name=index_name,
+            cache_key=data_cache_key,
+            cache_tag=query_cache_tag,
+        ):
+            if (refresh_data is True) or data_cache_key not in self.cache:
+                fresh = True
+                records = self.downloader(**download_kwargs)
+                docs = [
+                    self.extractor(
+                        record,
+                        download_kwargs,
+                        self.context,
+                    )
+                    for record in records
+                ]
+                self._ds.build_index(data=docs, rebuild=True)
+                self.cache.set(
+                    data_cache_key,
+                    index_name,
+                    expire=self.cache_expire,
+                    tag=query_cache_tag,
+                )
+            else:
+                fresh = False
+            result = self._ds.search(query=query, limit=limit, simple_response=False)
+            result["fresh"] = fresh
+        if simple_response:  # pragma: no cover
+            return [hit["_source"] for hit in result["hits"]]
+        else:
+            return result
+
+    search = search_v1
