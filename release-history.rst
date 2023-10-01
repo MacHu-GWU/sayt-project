@@ -15,6 +15,28 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.4.1 (2023-09-30)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Features and Improvements**
+
+- Add ``RefreshableDataSet`` a new class that extend the ``DataSet``, it allows user to refresh the index automatically when necessary.
+- Add the following public api:
+    - ``sayt.api.T_Hit``
+    - ``sayt.api.T_Result``
+    - ``sayt.api.T_RECORD``
+    - ``sayt.api.T_KWARGS``
+    - ``sayt.api.T_DOWNLOADER``
+    - ``sayt.api.T_CACHE_KEY_DEF``
+    - ``sayt.api.T_CONTEXT``
+    - ``sayt.api.T_EXTRACTOR``
+    - ``sayt.api.T_RefreshableDataSetResult``
+    - ``sayt.api.RefreshableDataSet``
+
+**Miscellaneous**
+
+- since this library only supports Python3.8+, we removed the optional ``cached-property`` and ``dataclasses`` dependencies.
+
+
 0.3.2 (2023-09-28)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **Minor Improvements**

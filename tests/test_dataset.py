@@ -256,6 +256,8 @@ class TestRefreshableDataset:
             cache_expire=1,
             context={"greeting": "Hello"},
         )
+        rds.remove_all_index()
+        rds.remove_all_cache()
 
         def verify_result(res: T_RefreshableDataSetResult):
             assert len(res["hits"]) == 3
