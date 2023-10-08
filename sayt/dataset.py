@@ -11,8 +11,8 @@ import os
 import hashlib
 import contextlib
 import dataclasses
+from datetime import datetime
 from collections import OrderedDict
-from functools import cached_property
 
 from pathlib import Path
 
@@ -459,6 +459,25 @@ class DataSet:
         if self.dir_index.exists():
             shutil.rmtree(self.dir_index, ignore_errors=True)
 
+    @property
+    def _path_index_is_indexing(self):
+        return self.dir_index / f"{self.index_name}.is_indexing"
+
+    def _set_is_indexing(self):
+        self._path_index_is_indexing.write_text(datetime.utcnow().isoformat())
+
+    def _set_is_finished(self):
+        self._path_index_is_indexing.unlink(missing_ok=True)
+
+    def is_indexing(self) -> bool:
+        if self._path_index_is_indexing.exists():
+            last_writing_start = datetime.fromisoformat(
+                self._path_index_is_indexing.read_text()
+            )
+            if (datetime.utcnow() - last_writing_start).total_seconds() <= 300:
+                return True
+        return False
+
     def build_index(
         self,
         data: T.List[T.Dict[str, T.Any]],
@@ -488,11 +507,16 @@ class DataSet:
         else:  # pragma: no cover
             writer = idx.writer(limitmb=memory_limit)
 
-        for row in data:
-            doc = {field_name: row.get(field_name) for field_name in self._field_names}
-            writer.add_document(**doc)
-
-        writer.commit()
+        try:
+            self._set_is_indexing()
+            for row in data:
+                doc = {
+                    field_name: row.get(field_name) for field_name in self._field_names
+                }
+                writer.add_document(**doc)
+            writer.commit()
+        finally:
+            self._set_is_finished()
 
     # --------------------------------------------------------------------------
     # Cache
@@ -798,6 +822,36 @@ class RefreshableDataSet:
         if Path(self.cache.directory).exists():
             self.cache.clear()
 
+    def get_cache_key_and_index_name(
+        self,
+        download_kwargs: T_KWARGS = None,
+    ) -> T.Tuple[T.List[str], str]:
+        """
+        Utility method that get the cache key and index name by downloader kwargs.
+        """
+        cache_key = get_cache_key(
+            self.cache_key_def,
+            download_kwargs=download_kwargs,
+            context=self.context,
+        )
+        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
+        return cache_key, index_name
+
+    def is_indexing(self, download_kwargs: T_KWARGS) -> bool:
+        """
+        Check if the dataset is indexing.
+        """
+        cache_key, index_name = self.get_cache_key_and_index_name(
+            download_kwargs=download_kwargs,
+        )
+        with self._temp(
+            index_name=index_name,
+            cache_key="",
+            cache_tag="",
+        ):
+            flag = self._ds.is_indexing()
+        return flag
+
     # --------------------------------------------------------------------------
     # Developer Note
     #
@@ -831,12 +885,7 @@ class RefreshableDataSet:
         :param refresh_data: if True, then will force to download the data
             and refresh the index and cache.
         """
-        cache_key = get_cache_key(
-            self.cache_key_def,
-            download_kwargs=download_kwargs,
-            context=self.context,
-        )
-        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
+        cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key
         query_cache_tag = SEP.join(cache_key)
 
@@ -932,12 +981,7 @@ class RefreshableDataSet:
         :param refresh_data: if True, then will force to download the data
             and refresh the index and cache.
         """
-        cache_key = get_cache_key(
-            self.cache_key_def,
-            download_kwargs=download_kwargs,
-            context=self.context,
-        )
-        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
+        cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key
         query_cache_tag = SEP.join(cache_key)
 
