@@ -3,6 +3,7 @@ sayt.egg-info/
 tmp/
 .index/
 .cache/
+tracker.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
