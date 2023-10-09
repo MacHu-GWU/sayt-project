@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 
 import time
+import shutil
 from pathlib import Path
 
 import pytest
 
 from sayt.tracker import Tracker, TrackerIsLockedError
 
-path = Path(__file__).absolute().parent.joinpath("tracker.json")
+path = Path(__file__).absolute().parent.joinpath("tracker", "tracker.json")
+shutil.rmtree(path.parent, ignore_errors=True)
 
 
 def _test_case_1():

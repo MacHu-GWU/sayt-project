@@ -74,7 +74,11 @@ class Tracker:
     def _write(self):
         data = dataclasses.asdict(self)
         data.pop("path")
-        self.path.write_text(json.dumps(data))
+        try:
+            self.path.write_text(json.dumps(data))
+        except FileNotFoundError:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(data))
 
     def lock_it(self, expire: int):
         """ """
@@ -105,3 +109,4 @@ class Tracker:
         except Exception as e:
             tracker.unlock_it()
             raise e
+        tracker.unlock_it()
