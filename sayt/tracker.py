@@ -99,7 +99,6 @@ class Tracker:
     def lock(cls, path: Path, expire: int):
         tracker = cls.new(path)
         try:
-            print(f"tracker.is_locked(): {tracker.is_locked()}")
             if tracker.is_locked() is True:
                 raise TrackerIsLockedError
             else:

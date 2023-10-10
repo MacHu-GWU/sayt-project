@@ -15,17 +15,15 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
-0.4.2 (Backlog)
+0.5.1 (Backlog)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **Features and Improvements**
 
-**Minor Improvements**
-
-- Add a mechanism to detect if the dataset is doing indexing.
+- Add concurrency lock mechanism to prevent refreshing the index if there is another thread already working on it.
 
 **Bugfixes**
 
-**Miscellaneous**
+- Fix a bug that the cache is not correctly removed when rebuild the dataset.
 
 
 0.4.1 (2023-09-30)

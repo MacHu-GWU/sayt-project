@@ -465,6 +465,12 @@ class DataSet:
         return self.dir_index / f"{self.index_name}.tracker.json"
 
     def is_indexing(self) -> bool:
+        """
+        Return a boolean value to indicate that if this dataset is indexing.
+
+        If True, we should not allow other thread working on the same dataset
+        to index.
+        """
         return Tracker.new(self._path_tracker).is_locked()
 
     def _build_index(
@@ -477,7 +483,7 @@ class DataSet:
         """
         Build whoosh index for this dataset.
 
-        :param data:
+        :param data: list of dictionary documents data.
         :param memory_limit: maximum memory you can use for indexing, default is 512MB,
             you can use a larger number if you have more memory.
         :param multi_thread: use multi-threading to build index, default is False.
@@ -512,6 +518,15 @@ class DataSet:
         """
         A wrapper of the :meth:`DataSet._build_index`. Also prevent from
         concurrent indexing.
+
+        :param data: list of dictionary documents data.
+        :param memory_limit: maximum memory you can use for indexing, default is 512MB,
+            you can use a larger number if you have more memory.
+        :param multi_thread: use multi-threading to build index, default is False.
+        :param rebuild: if True, remove the existing index and rebuild it.
+        :param raise_lock_error: if True, it will raise an error when attempts to
+            index a dataset that there's another thread is indexing. if False,
+            then it silently pass without doing anying.
 
         :return: a boolean value to indicate whether building index happened.
         """
@@ -735,6 +750,8 @@ class T_RefreshableDataSetResult(T.TypedDict):
 class RefreshableDataSet:
     """
     Similar to :class:`DataSet`, but it supports refreshable data source.
+    It automatically re-download the data and rebuild the index when the index
+    not exists or the dataset is expired.
 
     :param downloader: a callable function that pull the dataset we need, and
         returns a list of record, each record is a dict data. This function
@@ -801,6 +818,24 @@ class RefreshableDataSet:
                 name="raw",
             ),
         ]
+
+        rds = RefreshableDataSet(
+            downloader=downloader,
+            cache_key_def=cache_key_def,
+            extractor=extractor,
+            fields=fields,
+            dir_index=Path("/path/to/index"),
+            dir_cache=Path("/path/to/cache"),
+            cache_expire=3600,
+            context={"greeting": "Hello"},
+        )
+
+        result = rds.search(
+            download_kwargs={"env": "dev"},
+            query="dev",
+        )
+
+        print(result)
     """
 
     downloader: T_DOWNLOADER = dataclasses.field()
@@ -810,7 +845,7 @@ class RefreshableDataSet:
     dir_index: Path = dataclasses.field()
     dir_cache: Path = dataclasses.field(default=None)
     cache: Cache = dataclasses.field(default=None)
-    cache_expire: int = dataclasses.field(default=None)
+    cache_expire: int = dataclasses.field(default=None) # todo: this field should be renamed to expire
     context: T_CONTEXT = dataclasses.field(default=None)
 
     def __post_init__(self):
@@ -973,7 +1008,7 @@ class RefreshableDataSet:
     ):
         """
         Temporarily change the index name, cache key and cache tag of the
-        sayt dataset object, and revert it back at the end.
+        :class:`DataSet` object, and revert it back at the end.
         """
         existing_index_name = self._ds.index_name
         existing_cache_key = self._ds.cache_key

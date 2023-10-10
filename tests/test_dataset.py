@@ -294,6 +294,15 @@ class TestRefreshableDataset:
         assert res["fresh"] is True
         assert res["cache"] is False
 
+        res = rds.search_v1(
+            download_kwargs={"env": "dev"},
+            query="dev",
+            limit=3,
+        )
+        verify_result(res)
+        assert res["fresh"] is False
+        assert res["cache"] is True
+
         # version 2
         res = rds.search_v2(
             download_kwargs={"env": "dev"},
