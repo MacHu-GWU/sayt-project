@@ -214,7 +214,6 @@ def test_get_cache_key():
 class TestRefreshableDataset:
     def test(self):
         def downloader(env: str) -> T.List[T.Dict[str, T.Any]]:
-            # print("get_data() called")
             n = 10
             return [
                 {"id": ith, "name": f"{ith}th-{env}-machine"} for ith in range(1, 1 + n)

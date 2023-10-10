@@ -25,6 +25,7 @@ from diskcache import Cache
 
 from .exc import MalformedDatasetSettingError
 from .compat import cached_property
+from .tracker import Tracker, TrackerIsLockedError
 
 
 @dataclasses.dataclass
@@ -460,25 +461,13 @@ class DataSet:
             shutil.rmtree(self.dir_index, ignore_errors=True)
 
     @property
-    def _path_index_is_indexing(self):
-        return self.dir_index / f"{self.index_name}.is_indexing"
-
-    def _set_is_indexing(self):
-        self._path_index_is_indexing.write_text(datetime.utcnow().isoformat())
-
-    def _set_is_finished(self):
-        self._path_index_is_indexing.unlink(missing_ok=True)
+    def _path_tracker(self):
+        return self.dir_index / f"{self.index_name}.tracker.json"
 
     def is_indexing(self) -> bool:
-        if self._path_index_is_indexing.exists():
-            last_writing_start = datetime.fromisoformat(
-                self._path_index_is_indexing.read_text()
-            )
-            if (datetime.utcnow() - last_writing_start).total_seconds() <= 300:
-                return True
-        return False
+        return Tracker.new(self._path_tracker).is_locked()
 
-    def build_index(
+    def _build_index(
         self,
         data: T.List[T.Dict[str, T.Any]],
         memory_limit: int = 512,
@@ -507,16 +496,41 @@ class DataSet:
         else:  # pragma: no cover
             writer = idx.writer(limitmb=memory_limit)
 
+        for row in data:
+            doc = {field_name: row.get(field_name) for field_name in self._field_names}
+            writer.add_document(**doc)
+        writer.commit()
+
+    def build_index(
+        self,
+        data: T.List[T.Dict[str, T.Any]],
+        memory_limit: int = 512,
+        multi_thread: bool = True,
+        rebuild: bool = True,
+        raise_lock_error: bool = False,
+    ) -> bool:
+        """
+        A wrapper of the :meth:`DataSet._build_index`. Also prevent from
+        concurrent indexing.
+
+        :return: a boolean value to indicate whether building index happened.
+        """
         try:
-            self._set_is_indexing()
-            for row in data:
-                doc = {
-                    field_name: row.get(field_name) for field_name in self._field_names
-                }
-                writer.add_document(**doc)
-            writer.commit()
-        finally:
-            self._set_is_finished()
+            with Tracker.lock(self._path_tracker, expire=300):
+                self._build_index(
+                    data=data,
+                    memory_limit=memory_limit,
+                    multi_thread=multi_thread,
+                    rebuild=rebuild,
+                )
+            return True
+        except TrackerIsLockedError as e:  # pragma: no cover
+            if raise_lock_error:
+                raise e
+            else:
+                return False
+        except Exception as e:
+            raise e
 
     # --------------------------------------------------------------------------
     # Cache
@@ -562,6 +576,7 @@ class DataSet:
         query: T.Union[str, whoosh.query.Query],
         limit: int = 20,
         simple_response: bool = True,
+        ignore_cache: bool = False,
     ) -> T.Union[T.List[dict], T_Result]:
         """
         Run full-text search. For details about the query language, check this
@@ -608,7 +623,7 @@ class DataSet:
         """
         # check cache
         query_cache_key = (self.cache_key, str(query), limit, simple_response)
-        if query_cache_key in self.cache:
+        if ignore_cache is False and query_cache_key in self.cache:
             result = self.cache.get(query_cache_key)
             if simple_response is False:
                 result["cache"] = True
@@ -875,6 +890,7 @@ class RefreshableDataSet:
         query: str = None,
         limit: int = 10,
         simple_response: bool = False,
+        ignore_cache: bool = False,
     ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
         """
         Similar to :meth:`DataSet.search`, but this method will automatically
@@ -888,6 +904,9 @@ class RefreshableDataSet:
         cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key
         query_cache_tag = SEP.join(cache_key)
+
+        if refresh_data:
+            ignore_cache = True
 
         ds = DataSet(
             dir_index=self.dir_index,
@@ -920,7 +939,12 @@ class RefreshableDataSet:
             )
         else:
             fresh = False
-        result = ds.search(query=query, limit=limit, simple_response=False)
+        result = ds.search(
+            query=query,
+            limit=limit,
+            simple_response=False,
+            ignore_cache=ignore_cache,
+        )
         result["fresh"] = fresh
         if simple_response:  # pragma: no cover
             return [hit["_source"] for hit in result["hits"]]
@@ -971,6 +995,7 @@ class RefreshableDataSet:
         query: str = None,
         limit: int = 10,
         simple_response: bool = False,
+        ignore_cache: bool = False,
     ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
         """
         Similar to :meth:`DataSet.search`, but this method will automatically
@@ -984,6 +1009,9 @@ class RefreshableDataSet:
         cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key
         query_cache_tag = SEP.join(cache_key)
+
+        if refresh_data:
+            ignore_cache = True
 
         with self._temp(
             index_name=index_name,
@@ -1010,7 +1038,12 @@ class RefreshableDataSet:
                 )
             else:
                 fresh = False
-            result = self._ds.search(query=query, limit=limit, simple_response=False)
+            result = self._ds.search(
+                query=query,
+                limit=limit,
+                simple_response=False,
+                ignore_cache=ignore_cache,
+            )
             result["fresh"] = fresh
         if simple_response:  # pragma: no cover
             return [hit["_source"] for hit in result["hits"]]
