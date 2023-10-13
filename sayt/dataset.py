@@ -463,7 +463,7 @@ class DataSet:
     def _path_tracker(self):
         return self.dir_index / f"{self.index_name}.tracker.json"
 
-    def is_indexing(self) -> bool:
+    def is_indexing(self) -> bool:  # pragma: no cover
         """
         Return a boolean value to indicate that if this dataset is indexing.
 
@@ -844,7 +844,9 @@ class RefreshableDataSet:
     dir_index: Path = dataclasses.field()
     dir_cache: Path = dataclasses.field(default=None)
     cache: Cache = dataclasses.field(default=None)
-    cache_expire: int = dataclasses.field(default=None) # todo: this field should be renamed to expire
+    cache_expire: int = dataclasses.field(
+        default=None
+    )  # todo: this field should be renamed to expire
     context: T_CONTEXT = dataclasses.field(default=None)
 
     def __post_init__(self):
@@ -886,9 +888,12 @@ class RefreshableDataSet:
         index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
         return cache_key, index_name
 
-    def is_indexing(self, download_kwargs: T_KWARGS) -> bool:
+    def is_indexing(self, download_kwargs: T_KWARGS) -> bool:  # pragma: no cover
         """
-        Check if the dataset is indexing.
+        Return a boolean value to indicate that if this dataset is indexing.
+
+        If True, we should not allow other thread working on the same dataset
+        to index.
         """
         cache_key, index_name = self.get_cache_key_and_index_name(
             download_kwargs=download_kwargs,
@@ -917,6 +922,21 @@ class RefreshableDataSet:
     #
     # 我们两种方式都实现了, 用户可以自行切换两种方式.
     # --------------------------------------------------------------------------
+    def is_data_cache_exists(
+        self,
+        download_kwargs: T_KWARGS = None,
+    ) -> bool:
+        """
+        Identify if the data cache exists.
+
+        :param download_kwargs: optional keyword arguments for the ``downloader``
+            callable function.
+
+        :return: True if the data cache exists, False otherwise.
+        """
+        data_cache_key, _ = self.get_cache_key_and_index_name(download_kwargs)
+        return data_cache_key in self.cache
+
     def search_v1(
         self,
         download_kwargs: T_KWARGS = None,
@@ -930,10 +950,15 @@ class RefreshableDataSet:
         Similar to :meth:`DataSet.search`, but this method will automatically
         download the data when necessary.
 
+        :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
+            ``Query`` 对象, 则直接使用.
         :param download_kwargs: optional keyword arguments for the ``downloader``
             callable function.
         :param refresh_data: if True, then will force to download the data
             and refresh the index and cache.
+        :param limit: 返回结果的最大数量.
+        :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
+            类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
         """
         cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key
@@ -1035,10 +1060,15 @@ class RefreshableDataSet:
         Similar to :meth:`DataSet.search`, but this method will automatically
         download the data when necessary.
 
+        :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
+            ``Query`` 对象, 则直接使用.
         :param download_kwargs: optional keyword arguments for the ``downloader``
             callable function.
         :param refresh_data: if True, then will force to download the data
             and refresh the index and cache.
+        :param limit: 返回结果的最大数量.
+        :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
+            类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
         """
         cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
         data_cache_key = cache_key

@@ -265,6 +265,7 @@ class TestRefreshableDataset:
                 assert "dev" in message
 
         # version 1
+        assert rds.is_data_cache_exists(download_kwargs={"env": "dev"}) is False
         res = rds.search_v1(
             download_kwargs={"env": "dev"},
             refresh_data=True,
@@ -274,6 +275,7 @@ class TestRefreshableDataset:
         verify_result(res)
         assert res["fresh"] is True
         assert res["cache"] is False
+        assert rds.is_data_cache_exists(download_kwargs={"env": "dev"}) is True
 
         res = rds.search_v1(
             download_kwargs={"env": "dev"},
