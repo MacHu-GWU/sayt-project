@@ -15,11 +15,26 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.5.2 (2023-10-13)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Minor Improvements**
+
+- Add the ``DataSet.is_data_cache_exists()`` method.
+
+**Miscellaneous**
+
+- Improve code coverage test.
+
+
 0.5.1 (2023-10-09)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **Features and Improvements**
 
 - Add concurrency lock mechanism to prevent refreshing the index if there is another thread already working on it.
+
+**Minor Improvements**
+
+- Add the ``DataSet.is_indexing()`` and ``RefreshableDataSet.is_indexing()`` method.
 
 **Bugfixes**
 
