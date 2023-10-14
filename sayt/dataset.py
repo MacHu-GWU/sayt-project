@@ -939,9 +939,9 @@ class RefreshableDataSet:
 
     def search_v1(
         self,
+        query: T.Union[str, whoosh.query.Query],
         download_kwargs: T_KWARGS = None,
         refresh_data: bool = False,
-        query: str = None,
         limit: int = 10,
         simple_response: bool = False,
         ignore_cache: bool = False,
@@ -1049,9 +1049,9 @@ class RefreshableDataSet:
 
     def search_v2(
         self,
+        query: T.Union[str, whoosh.query.Query],
         download_kwargs: T_KWARGS = None,
         refresh_data: bool = False,
-        query: str = None,
         limit: int = 10,
         simple_response: bool = False,
         ignore_cache: bool = False,
