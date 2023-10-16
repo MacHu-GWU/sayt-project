@@ -23,6 +23,7 @@ from diskcache import Cache
 from .exc import MalformedDatasetSettingError
 from .compat import cached_property
 from .tracker import Tracker, TrackerIsLockedError
+from .logger import logger
 
 
 @dataclasses.dataclass
@@ -498,7 +499,7 @@ class DataSet:
 
     def _build_index(
         self,
-        data: T.List[T.Dict[str, T.Any]],
+        data: T.Iterable[T_DOCUMENT],
         memory_limit: int = 512,
         multi_thread: bool = True,
         rebuild: bool = True,
@@ -526,20 +527,29 @@ class DataSet:
         else:  # pragma: no cover
             writer = idx.writer(limitmb=memory_limit)
 
-        for row in data:
+        i = 0
+        for i, row in enumerate(data, start=1):
             doc = {field_name: row.get(field_name) for field_name in self._field_names}
             writer.add_document(**doc)
         writer.commit()
+        logger.info(f"finished indexing {i} documents, commit the index.")
         self.cache.set(
             self.cache_key,
             self.index_name,
             expire=self.cache_expire,
             tag=self.cache_tag,
         )
+        logger.info(f"the dataset will expire in {self.cache_expire} seconds.")
 
+    @logger.start_and_end(
+        "build index",
+        start_emoji="🟢 🏗",
+        end_emoji="🔴 🏗",
+        pipe="🏗",
+    )
     def build_index(
         self,
-        data: T.List[T.Dict[str, T.Any]],
+        data: T.Iterable[T_DOCUMENT],
         memory_limit: int = 512,
         multi_thread: bool = True,
         rebuild: bool = True,
@@ -560,17 +570,25 @@ class DataSet:
 
         :return: a boolean value to indicate whether building index happened.
         """
+        logger.info("exam the index write lock ...")
         try:
             with Tracker.lock(self._path_tracker, expire=300):
-                self._build_index(
-                    data=data,
-                    memory_limit=memory_limit,
-                    multi_thread=multi_thread,
-                    rebuild=rebuild,
-                )
+                with logger.indent():
+                    logger.info("nice, it is not locked, working on indexing ...")
+                    with logger.indent():
+                        self._build_index(
+                            data=data,
+                            memory_limit=memory_limit,
+                            multi_thread=multi_thread,
+                            rebuild=rebuild,
+                        )
             return True
         except TrackerIsLockedError as e:  # pragma: no cover
             if raise_lock_error:
+                with logger.indent():
+                    logger.info(
+                        "ops, it is locked! raising TrackerIsLockedError error."
+                    )
                 raise e
             else:
                 return False
@@ -616,7 +634,7 @@ class DataSet:
         q = parser.parse(query_str)
         return q
 
-    def _search(
+    def _run_query(
         self,
         fresh: bool,
         query_cache_key: tuple,
@@ -628,6 +646,7 @@ class DataSet:
         Search the index with the given query and update the query cache.
         """
         # preprocess query and search arguments
+        logger.info("preprocessing query ...")
         if isinstance(query, str):
             q = self._parse_query(query)
         else:  # pragma: no cover
@@ -645,6 +664,7 @@ class DataSet:
             search_kwargs["sortedby"] = multi_facet
 
         # run search
+        logger.info(f"run search on index {self.index_name}...")
         idx = self._get_index()
         with idx.searcher() as searcher:
             if simple_response:
@@ -672,6 +692,11 @@ class DataSet:
                     "cache": False,
                     "hits": hits,
                 }
+                with logger.indent():
+                    logger.info("search took: {} milliseconds".format(result["took"]))
+                    logger.info("return: {} documents".format(result["size"]))
+                    logger.info("dataset is fresh: {}".format(result["fresh"]))
+                    logger.info("hit cache: {}".format(result["cache"]))
 
         # set cache, query should never expire
         self.cache.set(
@@ -681,7 +706,13 @@ class DataSet:
         )
         return result
 
-    def search(
+    @logger.start_and_end(
+        "searching",
+        start_emoji="🟢 🔎",
+        end_emoji="🔴 🔎",
+        pipe="🔎",
+    )
+    def _search(
         self,
         query: T.Union[str, whoosh.query.Query],
         limit: int = 20,
@@ -689,6 +720,43 @@ class DataSet:
         refresh_data: bool = False,
     ) -> T.Union[T.List[dict], T_Result]:
         """
+        Low level search function that decorated with the logger.
+        """
+        # check cache
+        if (refresh_data is True) or self.cache_key not in self.cache:
+            fresh = True
+            docs = self.downloader()
+            with logger.nested():
+                self.build_index(data=docs, rebuild=True)
+        else:
+            fresh = False
+
+        query_cache_key = (self.cache_key, str(query), limit, simple_response)
+        if query_cache_key in self.cache:
+            result = self.cache.get(query_cache_key)
+            if simple_response is False:
+                result["fresh"] = False
+                result["cache"] = True
+            return result
+
+        return self._run_query(
+            fresh=fresh,
+            query_cache_key=query_cache_key,
+            query=query,
+            limit=limit,
+            simple_response=simple_response,
+        )
+
+    def search(
+        self,
+        query: T.Union[str, whoosh.query.Query],
+        limit: int = 20,
+        simple_response: bool = True,
+        refresh_data: bool = False,
+        verbose: bool = False,
+    ) -> T.Union[T.List[dict], T_Result]:
+        """
+
         Run full-text search. For details about the query language, check this
         `link <https://whoosh.readthedocs.io/en/latest/querylang.html>`_.
 
@@ -733,26 +801,10 @@ class DataSet:
         :param refresh_data: if True, then will force to download the data
             and refresh the index and cache.
         """
-        # check cache
-        if (refresh_data is True) or self.cache_key not in self.cache:
-            fresh = True
-            docs = self.downloader()
-            self.build_index(data=docs, rebuild=True)
-        else:
-            fresh = False
-
-        query_cache_key = (self.cache_key, str(query), limit, simple_response)
-        if query_cache_key in self.cache:
-            result = self.cache.get(query_cache_key)
-            if simple_response is False:
-                result["fresh"] = False
-                result["cache"] = True
-            return result
-
-        return self._search(
-            fresh=fresh,
-            query_cache_key=query_cache_key,
-            query=query,
-            limit=limit,
-            simple_response=simple_response,
-        )
+        with logger.disabled(disable=not verbose):
+            return self._search(
+                query=query,
+                limit=limit,
+                simple_response=simple_response,
+                refresh_data=refresh_data,
+            )

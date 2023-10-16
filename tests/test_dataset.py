@@ -7,9 +7,9 @@ import random
 
 import faker
 from diskcache import Cache
-from fixa.timer import DateTimeTimer
 from rich import print as rprint
 
+from sayt.logger import logger
 from sayt.paths import dir_project_root
 from sayt.dataset import (
     StoredField,
@@ -195,9 +195,7 @@ class TestDataset:
         ds = create_book_dataset()
         ds.remove_all_index()
         ds.remove_all_cache()
-
-        with DateTimeTimer("build index"):
-            ds.build_index(data=downloader_1000_books())
+        ds.downloader = downloader_1000_books
 
         query = "police"
         res = ds.search(query)
@@ -255,6 +253,7 @@ class TestDataset:
         assert res["cache"] is False
 
     def test(self):
+        print("")
         self._test_search()
         self._test_performance()
         self._test_downloader()
