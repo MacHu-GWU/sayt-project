@@ -224,14 +224,16 @@ class TestDataset:
                 assert "dev" in name
 
         # event it is the first time, we force to refresh data
-        res = ds.search(refresh_data=True, query="dev", limit=3, simple_response=False)
+        res = ds.search(
+            refresh_data=True, query="dev", limit=3, simple_response=False, verbose=True
+        )
         # rprint(res)
         verify_result(res)
         assert res["fresh"] is True
         assert res["cache"] is False
 
         # this time it should use cache and the data is not fresh
-        res = ds.search(query="dev", limit=3, simple_response=False)
+        res = ds.search(query="dev", limit=3, simple_response=False, verbose=True)
         # rprint(res)
         verify_result(res)
         assert res["fresh"] is False

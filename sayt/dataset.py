@@ -692,11 +692,6 @@ class DataSet:
                     "cache": False,
                     "hits": hits,
                 }
-                with logger.indent():
-                    logger.info("search took: {} milliseconds".format(result["took"]))
-                    logger.info("return: {} documents".format(result["size"]))
-                    logger.info("dataset is fresh: {}".format(result["fresh"]))
-                    logger.info("hit cache: {}".format(result["cache"]))
 
         # set cache, query should never expire
         self.cache.set(
@@ -724,28 +719,41 @@ class DataSet:
         """
         # check cache
         if (refresh_data is True) or self.cache_key not in self.cache:
+            logger.info("dataset is expired, need to rebuild the index")
             fresh = True
             docs = self.downloader()
             with logger.nested():
                 self.build_index(data=docs, rebuild=True)
         else:
+            logger.info("dataset is NOT expired, skip the downloader")
             fresh = False
 
         query_cache_key = (self.cache_key, str(query), limit, simple_response)
         if query_cache_key in self.cache:
+            logger.info("HIT query cache!")
             result = self.cache.get(query_cache_key)
             if simple_response is False:
                 result["fresh"] = False
                 result["cache"] = True
-            return result
+        else:
+            logger.info("NOT hit query cache!")
+            result = self._run_query(
+                fresh=fresh,
+                query_cache_key=query_cache_key,
+                query=query,
+                limit=limit,
+                simple_response=simple_response,
+            )
+        if simple_response is False:
+            with logger.indent():
+                logger.info("search took: {} milliseconds".format(result["took"]))
+                logger.info("return: {} documents".format(result["size"]))
+                logger.info("dataset is fresh: {}".format(result["fresh"]))
+                logger.info("hit cache: {}".format(result["cache"]))
+        else:
+            logger.info("return: {} documents".format(len(result)))
 
-        return self._run_query(
-            fresh=fresh,
-            query_cache_key=query_cache_key,
-            query=query,
-            limit=limit,
-            simple_response=simple_response,
-        )
+        return result
 
     def search(
         self,
