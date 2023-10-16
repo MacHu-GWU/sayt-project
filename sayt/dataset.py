@@ -8,8 +8,6 @@ import typing as T
 import time
 import shutil
 import os
-import hashlib
-import contextlib
 import dataclasses
 from collections import OrderedDict
 
@@ -233,14 +231,17 @@ class _Nothing:
 NOTHING = _Nothing()
 
 
+T_DOCUMENT = T.Dict[str, T.Any]
+
+
 class T_Hit(T.TypedDict):
     """
     Represent a hit in the search result.
     """
 
-    _id: int
-    _score: int
-    _source: T.Dict[str, T.Any]
+    _id: int  # the document id
+    _score: int  # the score of the hit, higher score means more relevant
+    _source: T_DOCUMENT  # the raw document data
 
 
 class T_Result(T.TypedDict):
@@ -252,17 +253,24 @@ class T_Result(T.TypedDict):
     - https://www.elastic.co/guide/en/elasticsearch/reference/current/search-your-data.html
     """
 
-    index: str
-    took: int
-    size: int
-    cache: bool
-    hits: T.List[T_Hit]
+    index: str  # the name of the index
+    took: int  # the time took to search
+    size: int  # the number of hits returned
+    fresh: bool  # whether the dataset is fresh or not
+    cache: bool  # whether the query result is from cache or not
+    hits: T.List[T_Hit]  # the list of matched documents
+
+
+T_DOWNLOADER = T.Callable[..., T.Iterable[T_DOCUMENT]]
 
 
 @dataclasses.dataclass
 class DataSet:
     """
-    Defines how you want to index your dataset.
+    An abstraction of a searchable dataset. It defines:
+
+    - how you want to index and search your dataset.
+    - how to download your dataset.
 
     You should run :meth:`DataSet.build_index` to create the index for your
     dataset, then you can start using :meth:`DataSet.search` to search your
@@ -272,16 +280,30 @@ class DataSet:
     download it from internet, you can consider :class:`RefreshableDataSet` to
     cache your index and dataset and refresh them when need needed.
 
-    :param dir_index: 索引所在的文件夹. 如果不存在, 会自动创建.
-    :param index_name: 索引的名字. 一个索引是类似于数据库中的数据表的概念. 在同一个索引文件夹
-        下不同的索引会被分散到不同的文件中, 属于同一个索引的文件会有相同的前缀.
-    :param fields: 定义了这个数据集将会如何被索引.
-    :param cache: diskcache 缓存对象.
-    :param cache_key: 该 dataset 被缓存时所用的 key.
-    :param cache_tag: 该 dataset 被缓存时所用的 tag, 这个 tag 可以被用作清除缓存的时候的过滤条件.
-    :param cache_expire: cache 的缓存失效时间
-    :param skip_validation: 是否跳过对 Dataset 初始化的 validation 检查. 默认是不跳过,
-        也就是进行检查.
+    :param dir_index: the directory to store the index. If it does not exist,
+        it will be created automatically.
+    :param index_name: the name of the index. An index is like a table in a
+        database. Different indexes under the same index directory will be
+        stored in different files. Files under the same index will have the
+        same prefix.
+    :param fields: define how your dataset will be indexed and searched.
+    :param dir_cache: the directory to store the cache. If it does not exist,
+        it will be created automatically. You can either set this and let the
+        program create the ``diskcache.Cache`` object for you, or you can
+        explicitly create the ``diskcache.Cache`` object and pass it to the
+        ``cache`` parameter.
+    :param cache: a ``diskcache.Cache`` object. If you set this, you should not
+        set ``dir_cache`` parameter.
+    :param cache_key: the key used to indicate that the dataset is successfully
+        downloaded and indexed.
+    :param cache_tag: the tag used to clear the data cache and query cache for
+        this dataset.
+    :param cache_expire: cache expire time in seconds.
+    :param downloader: a callable function that pull the dataset we need, and
+        returns a list of record, each record is a dict data. This function
+        will be called if your cache expired or you force to refresh the data.
+    :param skip_validation: whether to skip the validation of the dataset.
+        Default is False, which means the dataset will be validated.
     """
 
     dir_index: Path = dataclasses.field(default=NOTHING)
@@ -293,6 +315,8 @@ class DataSet:
     cache_key: str = dataclasses.field(default=NOTHING)
     cache_tag: T.Optional[str] = dataclasses.field(default=None)
     cache_expire: T.Optional[int] = dataclasses.field(default=None)
+
+    downloader: T_DOWNLOADER = dataclasses.field(default=lambda: [])
 
     skip_validation: bool = dataclasses.field(default=False)
 
@@ -480,7 +504,8 @@ class DataSet:
         rebuild: bool = True,
     ):
         """
-        Build whoosh index for this dataset.
+        Build whoosh index for this dataset and update the cache to indicate
+        that it is succeeded.
 
         :param data: list of dictionary documents data.
         :param memory_limit: maximum memory you can use for indexing, default is 512MB,
@@ -505,6 +530,12 @@ class DataSet:
             doc = {field_name: row.get(field_name) for field_name in self._field_names}
             writer.add_document(**doc)
         writer.commit()
+        self.cache.set(
+            self.cache_key,
+            self.index_name,
+            expire=self.cache_expire,
+            tag=self.cache_tag,
+        )
 
     def build_index(
         self,
@@ -543,7 +574,7 @@ class DataSet:
                 raise e
             else:
                 return False
-        except Exception as e:
+        except Exception as e:  # pragma: no cover
             raise e
 
     # --------------------------------------------------------------------------
@@ -585,12 +616,77 @@ class DataSet:
         q = parser.parse(query_str)
         return q
 
+    def _search(
+        self,
+        fresh: bool,
+        query_cache_key: tuple,
+        query: T.Union[str, whoosh.query.Query],
+        limit: int = 20,
+        simple_response: bool = True,
+    ) -> T.Union[T.List[dict], T_Result]:
+        """
+        Search the index with the given query and update the query cache.
+        """
+        # preprocess query and search arguments
+        if isinstance(query, str):
+            q = self._parse_query(query)
+        else:  # pragma: no cover
+            q = query
+
+        search_kwargs = dict(
+            q=q,
+            limit=limit,
+        )
+        if len(self._sortable_fields):
+            multi_facet = whoosh.sorting.MultiFacet()
+            for field_name in self._sortable_fields:
+                field = self._fields_mapper[field_name]
+                multi_facet.add_field(field_name, reverse=not field._is_ascending())
+            search_kwargs["sortedby"] = multi_facet
+
+        # run search
+        idx = self._get_index()
+        with idx.searcher() as searcher:
+            if simple_response:
+                res = searcher.search(**search_kwargs)
+                doc_list = [hit.fields() for hit in res]
+                result = doc_list
+            else:
+                st = time.process_time()
+                res = searcher.search(**search_kwargs)
+                hits = list()
+                for hit in res:
+                    hits.append(
+                        {
+                            "_id": hit.docnum,
+                            "_score": hit.score,
+                            "_source": hit.fields(),
+                        }
+                    )
+                et = time.process_time()
+                result = {
+                    "index": self.index_name,
+                    "took": int((et - st) // 0.001),
+                    "size": len(hits),
+                    "fresh": fresh,
+                    "cache": False,
+                    "hits": hits,
+                }
+
+        # set cache, query should never expire
+        self.cache.set(
+            query_cache_key,
+            result,
+            tag=self.cache_tag,
+        )
+        return result
+
     def search(
         self,
         query: T.Union[str, whoosh.query.Query],
         limit: int = 20,
         simple_response: bool = True,
-        ignore_cache: bool = False,
+        refresh_data: bool = False,
     ) -> T.Union[T.List[dict], T_Result]:
         """
         Run full-text search. For details about the query language, check this
@@ -634,484 +730,29 @@ class DataSet:
         :param limit: 返回结果的最大数量.
         :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
             类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
+        :param refresh_data: if True, then will force to download the data
+            and refresh the index and cache.
         """
         # check cache
+        if (refresh_data is True) or self.cache_key not in self.cache:
+            fresh = True
+            docs = self.downloader()
+            self.build_index(data=docs, rebuild=True)
+        else:
+            fresh = False
+
         query_cache_key = (self.cache_key, str(query), limit, simple_response)
-        if ignore_cache is False and query_cache_key in self.cache:
+        if query_cache_key in self.cache:
             result = self.cache.get(query_cache_key)
             if simple_response is False:
+                result["fresh"] = False
                 result["cache"] = True
             return result
 
-        # preprocess query and search arguments
-        if isinstance(query, str):
-            q = self._parse_query(query)
-        else:  # pragma: no cover
-            q = query
-
-        search_kwargs = dict(
-            q=q,
-            limit=limit,
-        )
-        if len(self._sortable_fields):
-            multi_facet = whoosh.sorting.MultiFacet()
-            for field_name in self._sortable_fields:
-                field = self._fields_mapper[field_name]
-                multi_facet.add_field(field_name, reverse=not field._is_ascending())
-            search_kwargs["sortedby"] = multi_facet
-
-        # run search
-        idx = self._get_index()
-        with idx.searcher() as searcher:
-            if simple_response:
-                res = searcher.search(**search_kwargs)
-                doc_list = [hit.fields() for hit in res]
-                result = doc_list
-            else:
-                st = time.process_time()
-                res = searcher.search(**search_kwargs)
-                hits = list()
-                for hit in res:
-                    hits.append(
-                        {
-                            "_id": hit.docnum,
-                            "_score": hit.score,
-                            "_source": hit.fields(),
-                        }
-                    )
-                et = time.process_time()
-                result = {
-                    "index": self.index_name,
-                    "took": int((et - st) // 0.001),
-                    "size": len(hits),
-                    "cache": False,
-                    "hits": hits,
-                }
-
-        # set cache
-        self.cache.set(
-            query_cache_key,
-            result,
-            expire=self.cache_expire,
-            tag=self.cache_tag,
-        )
-        return result
-
-
-T_RECORD = T.Dict[str, T.Any]
-T_KWARGS = T.Optional[T.Dict[str, T.Any]]
-T_DOWNLOADER = T.Callable[..., T.Iterable[T_RECORD]]
-T_CACHE_KEY_DEF = T.Union[T.List[str], T.Callable[..., T.List[str]]]
-T_CONTEXT = T.Optional[T.Dict[str, T.Any]]
-T_EXTRACTOR = T.Callable[[T_RECORD, T_KWARGS, T_CONTEXT], T_RECORD]
-
-SEP = "-"
-
-
-def get_cache_key(
-    cache_key_def: T_CACHE_KEY_DEF,
-    download_kwargs: T_KWARGS,
-    context: T_CONTEXT,
-) -> T.List[str]:
-    """
-    Evaluate the final cache key (list of string) from the cache key definition.
-    downloader keyword arguments and optional context data will be used for
-    evaluation.
-    """
-    if callable(cache_key_def):
-        return cache_key_def(download_kwargs=download_kwargs, context=context)
-    else:
-        return cache_key_def
-
-
-def get_md5_hash(s: str) -> str:
-    return hashlib.md5(s.encode("utf-8")).hexdigest()
-
-
-class T_RefreshableDataSetResult(T.TypedDict):
-    """
-    Return type of the :meth:`DataSet.search` method when ``simple_response = False``.
-
-    Reference:
-
-    - https://www.elastic.co/guide/en/elasticsearch/reference/current/search-your-data.html
-    """
-
-    fresh: bool
-    index: str
-    took: int
-    size: int
-    cache: bool
-    hits: T.List[T_Hit]
-
-
-@dataclasses.dataclass
-class RefreshableDataSet:
-    """
-    Similar to :class:`DataSet`, but it supports refreshable data source.
-    It automatically re-download the data and rebuild the index when the index
-    not exists or the dataset is expired.
-
-    :param downloader: a callable function that pull the dataset we need, and
-        returns a list of record, each record is a dict data. This function
-        will be called if your cache expired or you force to refresh the data.
-    :param cache_key_def: cache key definition, it can be a literal value
-        as the cache key or a callable function that takes the download kwargs
-        and optional context data as input, and returns the cache key.
-        that returns the cache key. The evaluated value will be used as part of
-        the ``index_name``, ``cache_key`` and ``cache_tag`` naming convention.
-    :param extractor: convert the record into whoosh indexable document,
-        the document schema should match the definition in ``fields``.
-    :param fields: similar to :class:`DataSet`.
-    :param dir_index: similar to :class:`DataSet`.
-    :param dir_cache: similar to :class:`DataSet`.
-    :param cache: similar to :class:`DataSet`.
-    :param cache_expire: how long your cache will expire so you have to
-        re-download your dataset. In refreshable dataset, the query cache never
-        expires if the dataset is not expired. And the query cache will be
-        automatically expired if the dataset is expired.
-    :param context: additional context object that will be used in cache key
-        evaluation and document extraction.
-
-    Example::
-
-        # the downloader function takes an environment name as input,
-        # and returns a list of VM machine records in that environment.
-        def downloader(env: str) -> T.List[T.Dict[str, T.Any]]:
-            n = 10
-            return [
-                {"id": ith, "name": f"{ith}th-{env}-machine"}
-                for ith in range(1, 1 + n)
-            ]
-
-        # we assume that different download kwargs will result in different
-        # dataset, so the cache key should also be different
-        # cache_key_def is a callable function that takes the download_kwargs
-        # and optional context data as input, and returns the cache key.
-        def cache_key_def(
-            download_kwargs: T_KWARGS,
-            context: T_CONTEXT,
-        ):
-            return [download_kwargs["env"]]
-
-        # extractor is a function that converts the record into whoosh document
-        def extractor(
-            record: T_RECORD,
-            download_kwargs: T_KWARGS,
-            context: T_CONTEXT,
-        ) -> T_RECORD:
-            greeting = context["greeting"]
-            name = record["name"]
-            return {"message": f"{greeting} {name}", "raw": record}
-
-        # we would like to use ngram search on message field
-        # and store the raw data as it is
-        fields = [
-            NgramWordsField(
-                name="message",
-                stored=True,
-                minsize=2,
-                maxsize=6,
-            ),
-            StoredField(
-                name="raw",
-            ),
-        ]
-
-        rds = RefreshableDataSet(
-            downloader=downloader,
-            cache_key_def=cache_key_def,
-            extractor=extractor,
-            fields=fields,
-            dir_index=Path("/path/to/index"),
-            dir_cache=Path("/path/to/cache"),
-            cache_expire=3600,
-            context={"greeting": "Hello"},
-        )
-
-        result = rds.search(
-            download_kwargs={"env": "dev"},
-            query="dev",
-        )
-
-        print(result)
-    """
-
-    downloader: T_DOWNLOADER = dataclasses.field()
-    cache_key_def: T_CACHE_KEY_DEF = dataclasses.field()
-    extractor: T_EXTRACTOR = dataclasses.field()
-    fields: T.List[T_Field] = dataclasses.field()
-    dir_index: Path = dataclasses.field()
-    dir_cache: Path = dataclasses.field(default=None)
-    cache: Cache = dataclasses.field(default=None)
-    cache_expire: int = dataclasses.field(
-        default=None
-    )  # todo: this field should be renamed to expire
-    context: T_CONTEXT = dataclasses.field(default=None)
-
-    def __post_init__(self):
-        if self.dir_cache is not None:  # pragma: no cover
-            self.dir_cache = Path(self.dir_cache)
-        if self.cache is None:  # pragma: no cover
-            # diskcache uses pickle to serialize cache key, we have to hard code
-            # the protocol value to make it consistent across different python
-            self.cache = Cache(str(self.dir_cache), disk_pickle_protocol=5)
-        else:  # pragma: no cover
-            self.dir_cache = Path(self.cache.directory)
-
-    def remove_all_index(self):  # pragma: no cover
-        """
-        Remove all whoosh index in the index directory.
-        """
-        if self.dir_index.exists():
-            shutil.rmtree(self.dir_index, ignore_errors=True)
-
-    def remove_all_cache(self):  # pragma: no cover
-        """
-        Remove all cache in the cache directory.
-        """
-        if Path(self.cache.directory).exists():
-            self.cache.clear()
-
-    def get_cache_key_and_index_name(
-        self,
-        download_kwargs: T_KWARGS = None,
-    ) -> T.Tuple[T.List[str], str]:
-        """
-        Utility method that get the cache key and index name by downloader kwargs.
-        """
-        cache_key = get_cache_key(
-            self.cache_key_def,
-            download_kwargs=download_kwargs,
-            context=self.context,
-        )
-        index_name = SEP.join([get_md5_hash(k)[:6] for k in cache_key])
-        return cache_key, index_name
-
-    def is_indexing(self, download_kwargs: T_KWARGS) -> bool:  # pragma: no cover
-        """
-        Return a boolean value to indicate that if this dataset is indexing.
-
-        If True, we should not allow other thread working on the same dataset
-        to index.
-        """
-        cache_key, index_name = self.get_cache_key_and_index_name(
-            download_kwargs=download_kwargs,
-        )
-        with self._temp(
-            index_name=index_name,
-            cache_key="",
-            cache_tag="",
-        ):
-            flag = self._ds.is_indexing()
-        return flag
-
-    # --------------------------------------------------------------------------
-    # Developer Note
-    #
-    # 逻辑上, 如果 download_kwargs 的参数不同, 那么下载下来的应该是不同的 dataset,
-    # 这些 dataset 的 index_name, cache_key, cache_tag 都应该不同. 我们通常有两种
-    # 方式可以实现这一点:
-    #
-    # 1. 每次调用 search 方法的时候都重新创建一个 DataSet 对象, 给他们不同的 index_name.
-    #   这种方法的好处是线程安全, 每次 search 方法的调用都是一个新的 DataSet 对象. 但是坏处是
-    #   会生成很多 DataSet 对象, 并自动调用它底层的 ``__post_init__`` 方法. 比较耗时.
-    # 2. 用一个 cached property 来给 Refreshable dataset 绑定一个 DataSet 对象,
-    #   每次执行 search 方法的时候临时对 index_name 做出修改. 但是在多线程共享一个 DataSet
-    #   对象的时候, 会有线程安全的问题.
-    #
-    # 我们两种方式都实现了, 用户可以自行切换两种方式.
-    # --------------------------------------------------------------------------
-    def is_data_cache_exists(
-        self,
-        download_kwargs: T_KWARGS = None,
-    ) -> bool:
-        """
-        Identify if the data cache exists.
-
-        :param download_kwargs: optional keyword arguments for the ``downloader``
-            callable function.
-
-        :return: True if the data cache exists, False otherwise.
-        """
-        data_cache_key, _ = self.get_cache_key_and_index_name(download_kwargs)
-        return data_cache_key in self.cache
-
-    def search_v1(
-        self,
-        query: T.Union[str, whoosh.query.Query],
-        download_kwargs: T_KWARGS = None,
-        refresh_data: bool = False,
-        limit: int = 10,
-        simple_response: bool = False,
-        ignore_cache: bool = False,
-    ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
-        """
-        Similar to :meth:`DataSet.search`, but this method will automatically
-        download the data when necessary.
-
-        :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
-            ``Query`` 对象, 则直接使用.
-        :param download_kwargs: optional keyword arguments for the ``downloader``
-            callable function.
-        :param refresh_data: if True, then will force to download the data
-            and refresh the index and cache.
-        :param limit: 返回结果的最大数量.
-        :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
-            类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
-        """
-        cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
-        data_cache_key = cache_key
-        query_cache_tag = SEP.join(cache_key)
-
-        if refresh_data:
-            ignore_cache = True
-
-        ds = DataSet(
-            dir_index=self.dir_index,
-            index_name=index_name,
-            fields=self.fields,
-            dir_cache=None,
-            cache=self.cache,
-            cache_key=data_cache_key,
-            cache_tag=query_cache_tag,
-            cache_expire=None,
-        )
-
-        if (refresh_data is True) or data_cache_key not in self.cache:
-            fresh = True
-            records = self.downloader(**download_kwargs)
-            docs = [
-                self.extractor(
-                    record,
-                    download_kwargs,
-                    self.context,
-                )
-                for record in records
-            ]
-            ds.build_index(data=docs, rebuild=True)
-            self.cache.set(
-                data_cache_key,
-                index_name,
-                expire=self.cache_expire,
-                tag=query_cache_tag,
-            )
-        else:
-            fresh = False
-        result = ds.search(
+        return self._search(
+            fresh=fresh,
+            query_cache_key=query_cache_key,
             query=query,
             limit=limit,
-            simple_response=False,
-            ignore_cache=ignore_cache,
+            simple_response=simple_response,
         )
-        result["fresh"] = fresh
-        if simple_response:  # pragma: no cover
-            return [hit["_source"] for hit in result["hits"]]
-        else:
-            return result
-
-    @cached_property
-    def _ds(self) -> DataSet:
-        return DataSet(
-            dir_index=self.dir_index,
-            index_name=None,
-            fields=self.fields,
-            dir_cache=None,
-            cache=self.cache,
-            cache_key=None,
-            cache_tag=None,
-            cache_expire=None,
-        )
-
-    @contextlib.contextmanager
-    def _temp(
-        self,
-        index_name: str,
-        cache_key: str,
-        cache_tag: str,
-    ):
-        """
-        Temporarily change the index name, cache key and cache tag of the
-        :class:`DataSet` object, and revert it back at the end.
-        """
-        existing_index_name = self._ds.index_name
-        existing_cache_key = self._ds.cache_key
-        existing_cache_tag = self._ds.cache_tag
-        try:
-            self._ds.index_name = index_name
-            self._ds.cache_key = cache_key
-            self._ds.cache_tag = cache_tag
-            yield self
-        finally:
-            self._ds.index_name = existing_index_name
-            self._ds.cache_key = existing_cache_key
-            self._ds.cache_tag = existing_cache_tag
-
-    def search_v2(
-        self,
-        query: T.Union[str, whoosh.query.Query],
-        download_kwargs: T_KWARGS = None,
-        refresh_data: bool = False,
-        limit: int = 10,
-        simple_response: bool = False,
-        ignore_cache: bool = False,
-    ) -> T.Union[T_RefreshableDataSetResult, T.List[dict]]:
-        """
-        Similar to :meth:`DataSet.search`, but this method will automatically
-        download the data when necessary.
-
-        :param query: 如果是一个字符串, 则使用 ``MultifieldParser`` 解析. 如果是一个
-            ``Query`` 对象, 则直接使用.
-        :param download_kwargs: optional keyword arguments for the ``downloader``
-            callable function.
-        :param refresh_data: if True, then will force to download the data
-            and refresh the index and cache.
-        :param limit: 返回结果的最大数量.
-        :param simple_response: 如果为 ``True``, 则返回 list of dict 对象, 否则返回
-            类似于 ElasticSearch 的 HTTP response 的那种 :class:`Result` 对象.
-        """
-        cache_key, index_name = self.get_cache_key_and_index_name(download_kwargs)
-        data_cache_key = cache_key
-        query_cache_tag = SEP.join(cache_key)
-
-        if refresh_data:
-            ignore_cache = True
-
-        with self._temp(
-            index_name=index_name,
-            cache_key=data_cache_key,
-            cache_tag=query_cache_tag,
-        ):
-            if (refresh_data is True) or data_cache_key not in self.cache:
-                fresh = True
-                records = self.downloader(**download_kwargs)
-                docs = [
-                    self.extractor(
-                        record,
-                        download_kwargs,
-                        self.context,
-                    )
-                    for record in records
-                ]
-                self._ds.build_index(data=docs, rebuild=True)
-                self.cache.set(
-                    data_cache_key,
-                    index_name,
-                    expire=self.cache_expire,
-                    tag=query_cache_tag,
-                )
-            else:
-                fresh = False
-            result = self._ds.search(
-                query=query,
-                limit=limit,
-                simple_response=False,
-                ignore_cache=ignore_cache,
-            )
-            result["fresh"] = fresh
-        if simple_response:  # pragma: no cover
-            return [hit["_source"] for hit in result["hits"]]
-        else:
-            return result
-
-    search = search_v1

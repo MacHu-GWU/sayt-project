@@ -2,10 +2,10 @@
 
 import typing as T
 import uuid
+import time
 import random
 
 import faker
-import pytest
 from diskcache import Cache
 from fixa.timer import DateTimeTimer
 from rich import print as rprint
@@ -23,16 +23,6 @@ from sayt.dataset import (
     NgramField,
     NgramWordsField,
     DataSet,
-    get_cache_key,
-    RefreshableDataSet,
-    MalformedDatasetSettingError,
-    T_RECORD,
-    T_KWARGS,
-    T_DOWNLOADER,
-    T_CACHE_KEY_DEF,
-    T_CONTEXT,
-    T_EXTRACTOR,
-    T_RefreshableDataSetResult,
 )
 
 
@@ -46,47 +36,77 @@ class TestField:
         assert field._is_ascending() is False
 
 
+def downloader_one_book():
+    return [
+        {
+            "id": "id-1234",
+            "title": "Sustainable Energy - without the hot air",
+            "author": "MacKay, David JC",
+            "year": 2009,
+        },
+    ]
+
+
+def downloader_1000_books():
+    return [
+        {
+            "id": uuid.uuid4().hex,
+            "title": fake.sentence(),
+            "author": fake.name(),
+            "year": random.randint(1980, 2020),
+        }
+        for _ in range(1000)
+    ]
+
+
+def create_book_dataset():
+    return DataSet(
+        dir_index=dir_project_root.joinpath(".index"),
+        index_name="book-dataset",
+        fields=[
+            IdField(name="id", stored=True),
+            TextField(name="title", stored=True),
+            NgramField(name="author", stored=True, minsize=2, maxsize=6),
+            NumericField(name="year", stored=True, sortable=True, ascending=False),
+        ],
+        cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
+        cache_key="book-dataset",
+        cache_expire=1,
+        cache_tag="book-dataset",
+    )
+
+
+def downloader_50_machines() -> T.List[T.Dict[str, T.Any]]:
+    n = 50
+    envs = ["dev", "test", "prod"]
+    return [
+        {"id": ith, "name": f"{ith}th-{random.choice(envs)}-machine"}
+        for ith in range(1, 1 + n)
+    ]
+
+
+def create_machine_dataset():
+    return DataSet(
+        dir_index=dir_project_root.joinpath(".index"),
+        index_name="machine-dataset",
+        fields=[
+            NgramWordsField(name="name", stored=True, minsize=2, maxsize=6),
+            StoredField(name="raw"),
+        ],
+        cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
+        cache_key="machine-dataset",
+        cache_expire=1,
+        cache_tag="machine-dataset",
+        downloader=downloader_50_machines,
+    )
+
+
 class TestDataset:
-    def test(self):
-        ds = DataSet(
-            dir_index=dir_project_root.joinpath(".index"),
-            index_name="my-dataset",
-            fields=[
-                IdField(name="id", stored=True),
-                TextField(name="title", stored=True),
-                NgramField(
-                    name="author",
-                    stored=True,
-                    minsize=2,
-                    maxsize=6,
-                ),
-                NumericField(
-                    name="year",
-                    stored=True,
-                    sortable=True,
-                    ascending=False,
-                ),
-            ],
-            cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
-            cache_key="my-dataset",
-            cache_expire=1,
-            cache_tag="dev",
-        )
+    def _test_search(self):
+        ds = create_book_dataset()
         ds.remove_all_index()
-
-        # ----------------------------------------------------------------------
-        # Test functionality
-        # ----------------------------------------------------------------------
-        data = [
-            {
-                "id": "id-1234",
-                "title": "Sustainable Energy - without the hot air",
-                "author": "MacKay, David JC",
-                "year": 2009,
-            },
-        ]
-
-        ds.build_index(data=data)
+        ds.remove_all_cache()
+        ds.build_index(data=downloader_one_book())
 
         def assert_hit(query):
             res = ds.search(query)
@@ -171,21 +191,13 @@ class TestDataset:
         logical_operator_case()
         fuzzy_search_case()
 
-        # ----------------------------------------------------------------------
-        # Test performance
-        # ----------------------------------------------------------------------
-        data = [
-            {
-                "id": uuid.uuid4().hex,
-                "title": fake.sentence(),
-                "author": fake.name(),
-                "year": random.randint(1980, 2020),
-            }
-            for _ in range(1000)
-        ]
+    def _test_performance(self):
+        ds = create_book_dataset()
+        ds.remove_all_index()
+        ds.remove_all_cache()
 
         with DateTimeTimer("build index"):
-            ds.build_index(data=data)
+            ds.build_index(data=downloader_1000_books())
 
         query = "police"
         res = ds.search(query)
@@ -202,138 +214,50 @@ class TestDataset:
         assert isinstance(res, dict)
         assert res["cache"] is True
 
+    def _test_downloader(self):
+        ds = create_machine_dataset()
+        ds.remove_all_index()
+        ds.remove_all_cache()
 
-def test_get_cache_key():
-    assert get_cache_key(
-        cache_key_def=["hello", "world"],
-        download_kwargs={},
-        context={},
-    ) == ["hello", "world"]
-
-
-class TestRefreshableDataset:
-    def test(self):
-        def downloader(env: str) -> T.List[T.Dict[str, T.Any]]:
-            n = 10
-            return [
-                {"id": ith, "name": f"{ith}th-{env}-machine"} for ith in range(1, 1 + n)
-            ]
-
-        def cache_key_def(
-            download_kwargs: T_KWARGS,
-            context: T_CONTEXT,
-        ):
-            return [download_kwargs["env"]]
-
-        def extractor(
-            record: T_RECORD,
-            download_kwargs: T_KWARGS,
-            context: T_CONTEXT,
-        ) -> T_RECORD:
-            greeting = context["greeting"]
-            name = record["name"]
-            return {"message": f"{greeting} {name}", "raw": record}
-
-        fields = [
-            NgramWordsField(
-                name="message",
-                stored=True,
-                minsize=2,
-                maxsize=6,
-            ),
-            StoredField(
-                name="raw",
-            ),
-        ]
-        rds = RefreshableDataSet(
-            downloader=downloader,
-            cache_key_def=cache_key_def,
-            extractor=extractor,
-            fields=fields,
-            dir_index=dir_project_root.joinpath(".index"),
-            cache=Cache(str(dir_project_root.joinpath(".cache")), tag_index=True),
-            cache_expire=1,
-            context={"greeting": "Hello"},
-        )
-        rds.remove_all_index()
-        rds.remove_all_cache()
-
-        def verify_result(res: T_RefreshableDataSetResult):
+        def verify_result(res):
             assert len(res["hits"]) == 3
             for hit in res["hits"]:
-                message = hit["_source"]["message"]
-                assert "dev" in message
+                name = hit["_source"]["name"]
+                assert "dev" in name
 
-        # version 1
-        assert rds.is_data_cache_exists(download_kwargs={"env": "dev"}) is False
-        res = rds.search_v1(
-            download_kwargs={"env": "dev"},
-            refresh_data=True,
-            query="dev",
-            limit=3,
-        )
+        # event it is the first time, we force to refresh data
+        res = ds.search(refresh_data=True, query="dev", limit=3, simple_response=False)
+        # rprint(res)
         verify_result(res)
         assert res["fresh"] is True
         assert res["cache"] is False
-        assert rds.is_data_cache_exists(download_kwargs={"env": "dev"}) is True
 
-        res = rds.search_v1(
-            download_kwargs={"env": "dev"},
-            query="dev",
-            limit=3,
-        )
+        # this time it should use cache and the data is not fresh
+        res = ds.search(query="dev", limit=3, simple_response=False)
+        # rprint(res)
         verify_result(res)
         assert res["fresh"] is False
         assert res["cache"] is True
 
-        res = rds.search_v1(
-            download_kwargs={"env": "dev"},
-            refresh_data=True,
-            query="dev",
-            limit=3,
-        )
+        # now we force to refresh the data
+        res = ds.search(refresh_data=True, query="dev", limit=3, simple_response=False)
+        # rprint(res)
         verify_result(res)
         assert res["fresh"] is True
         assert res["cache"] is False
 
-        res = rds.search_v1(
-            download_kwargs={"env": "dev"},
-            query="dev",
-            limit=3,
-        )
-        verify_result(res)
-        assert res["fresh"] is False
-        assert res["cache"] is True
-
-        # version 2
-        res = rds.search_v2(
-            download_kwargs={"env": "dev"},
-            refresh_data=True,
-            query="dev",
-            limit=3,
-        )
+        # let's wait 1 second, the cache should expire
+        time.sleep(1)
+        res = ds.search(refresh_data=True, query="dev", limit=3, simple_response=False)
+        # rprint(res)
         verify_result(res)
         assert res["fresh"] is True
         assert res["cache"] is False
 
-        res = rds.search_v2(
-            download_kwargs={"env": "dev"},
-            query="dev",
-            limit=3,
-        )
-        verify_result(res)
-        assert res["fresh"] is False
-        assert res["cache"] is True
-
-        res = rds.search_v2(
-            download_kwargs={"env": "dev"},
-            refresh_data=True,
-            query="dev",
-            limit=3,
-        )
-        verify_result(res)
-        assert res["fresh"] is True
-        assert res["cache"] is False
+    def test(self):
+        self._test_search()
+        self._test_performance()
+        self._test_downloader()
 
 
 if __name__ == "__main__":
