@@ -6,7 +6,7 @@ See test_lock.rst
 
 from diskcache import Cache
 from sayt.paths import dir_project_root
-from sayt.dataset import DataSet, NgramField
+from sayt.datasetv2 import DataSet, NgramField
 
 
 def main():
