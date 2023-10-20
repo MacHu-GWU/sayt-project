@@ -15,11 +15,12 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
-0.6.1 (2023-10-16)
+0.6.1 (2023-10-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-**Features and Improvements**
+**💥 Breaking change**
 
 - Rework the ``DataSet`` class, merge features in ``RefreshableDataSet`` into the ``DataSet`` class.
+- ``RefreshableDataSet`` is removed.
 
 
 0.5.3 (2023-10-14)
