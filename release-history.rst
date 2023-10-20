@@ -15,6 +15,17 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
+0.6.2 (2023-10-20)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+**Features and Improvements**
+
+- Be able to serialize and deserialize ``BaseField`` object.
+
+**Miscellaneous**
+
+- Add downloading block to logging message.
+
+
 0.6.1 (2023-10-20)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 **💥 Breaking change**

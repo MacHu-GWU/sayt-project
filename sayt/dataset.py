@@ -42,6 +42,23 @@ class BaseField:
         except AttributeError:
             return False
 
+    def to_dict(self) -> dict:
+        """
+        Serialize to dict.
+        """
+        dct = dataclasses.asdict(self)
+        dct["_type"] = self.__class__.__name__
+        return dct
+
+    @classmethod
+    def from_dict(cls, dct: dict) -> "T_Field":
+        """
+        Deserialize from dict. Smartly choose the right class.
+        """
+        dct1 = dct.copy()
+        klass = _field_type_mapper[dct1.pop("_type")]
+        return klass(**dct1)
+
 
 @dataclasses.dataclass
 class StoredField(BaseField):
@@ -201,6 +218,19 @@ _whoosh_field_mapper = {
     BooleanField: whoosh.fields.BOOLEAN,
     NgramField: whoosh.fields.NGRAM,
     NgramWordsField: whoosh.fields.NGRAMWORDS,
+}
+
+_field_type_mapper = {
+    StoredField.__name__: StoredField,
+    IdField.__name__: IdField,
+    IdListField.__name__: IdListField,
+    KeywordField.__name__: KeywordField,
+    TextField.__name__: TextField,
+    NumericField.__name__: NumericField,
+    DatetimeField.__name__: DatetimeField,
+    BooleanField.__name__: BooleanField,
+    NgramField.__name__: NgramField,
+    NgramWordsField.__name__: NgramWordsField,
 }
 
 T_Field = T.Union[
@@ -702,6 +732,15 @@ class DataSet:
         return result
 
     @logger.start_and_end(
+        "downloading",
+        start_emoji="🟢 🔽",
+        end_emoji="🔴 🔽",
+        pipe="🔽",
+    )
+    def _download(self):
+        return self.downloader()
+
+    @logger.start_and_end(
         "searching",
         start_emoji="🟢 🔎",
         end_emoji="🔴 🔎",
@@ -721,8 +760,8 @@ class DataSet:
         if (refresh_data is True) or self.cache_key not in self.cache:
             logger.info("dataset is expired, need to rebuild the index")
             fresh = True
-            docs = self.downloader()
             with logger.nested():
+                docs = self._download()
                 self.build_index(data=docs, rebuild=True)
         else:
             logger.info("dataset is NOT expired, skip the downloader")

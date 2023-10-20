@@ -12,6 +12,7 @@ from rich import print as rprint
 from sayt.logger import logger
 from sayt.paths import dir_project_root
 from sayt.dataset import (
+    BaseField,
     StoredField,
     IdField,
     IdListField,
@@ -34,6 +35,19 @@ class TestField:
         field = BooleanField(name="bool_field")
         assert field._is_sortable() is False
         assert field._is_ascending() is False
+
+    def test_seder(self):
+        fields = [
+            IdField(name="id", stored=True),
+            TextField(name="title", stored=True),
+            NgramField(name="author", stored=True, minsize=2, maxsize=6),
+            NumericField(name="year", stored=True, sortable=True, ascending=False),
+        ]
+        for field in fields:
+            dct = field.to_dict()
+            obj = BaseField.from_dict(dct)
+            assert obj == field
+
 
 
 def downloader_one_book():
