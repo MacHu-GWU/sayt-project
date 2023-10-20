@@ -270,9 +270,13 @@ class TestDataset:
 
     def test(self):
         print("")
-        self._test_search()
-        self._test_performance()
-        self._test_downloader()
+        with logger.disabled(
+            # disable=False, # show log
+            disable=True, # no log
+        ):
+            self._test_search()
+            self._test_performance()
+            self._test_downloader()
 
 
 if __name__ == "__main__":
