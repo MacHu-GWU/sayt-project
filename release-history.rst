@@ -15,15 +15,11 @@ x.y.z (Backlog)
 **Miscellaneous**
 
 
-0.6.4 (A)
+0.6.4 (2023-11-01)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-**Features and Improvements**
-
-**Minor Improvements**
-
-**Bugfixes**
-
 **Miscellaneous**
+
+- Add support for Python3.7 for backward compatibility.
 
 
 0.6.3 (2023-10-24)
