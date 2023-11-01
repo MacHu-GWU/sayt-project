@@ -369,9 +369,10 @@ class DataSet:
         if self.dir_cache is not None:  # pragma: no cover
             self.dir_cache = Path(self.dir_cache)
         if self.cache is None:  # pragma: no cover
-            self.cache = Cache(str(self.dir_cache))
+            self.cache = Cache(str(self.dir_cache), disk_pickle_protocol=4)
         else:
             self.dir_cache = Path(self.cache.directory)
+            self.cache.disk.pickle_protocol = 4
 
         for k, v in dataclasses.asdict(self).items():
             if isinstance(v, _Nothing):  # pragma: no cover
