@@ -21,7 +21,7 @@ from whoosh.index import open_dir, create_in, FileIndex, exists_in
 from diskcache import Cache
 
 from .exc import MalformedDatasetSettingError
-from .compat import cached_property
+from .compat import cached_property, TypedDict
 from .tracker import Tracker, TrackerIsLockedError
 from .logger import logger
 
@@ -265,7 +265,7 @@ NOTHING = _Nothing()
 T_DOCUMENT = T.Dict[str, T.Any]
 
 
-class T_Hit(T.TypedDict):
+class T_Hit(TypedDict):
     """
     Represent a hit in the search result.
     """
@@ -275,7 +275,7 @@ class T_Hit(T.TypedDict):
     _source: T_DOCUMENT  # the raw document data
 
 
-class T_Result(T.TypedDict):
+class T_Result(TypedDict):
     """
     Return type of the :meth:`DataSet.search` method when ``simple_response = False``.
 

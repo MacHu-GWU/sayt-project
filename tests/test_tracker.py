@@ -13,7 +13,8 @@ shutil.rmtree(path.parent, ignore_errors=True)
 
 
 def _test_case_1():
-    path.unlink(missing_ok=True)
+    if path.exists():
+        path.unlink()
 
     tracker = Tracker.new(path)
     tracker.lock_it(expire=1)
@@ -28,7 +29,8 @@ def _test_case_1():
 
 
 def _test_case_2():
-    path.unlink(missing_ok=True)
+    if path.exists():
+        path.unlink()
 
     tracker = Tracker.new(path)
     tracker.lock_it(expire=1)
